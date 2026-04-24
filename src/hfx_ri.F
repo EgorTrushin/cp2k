@@ -124,7 +124,8 @@ MODULE hfx_ri
    PRIVATE
 
    PUBLIC :: hfx_ri_update_ks, hfx_ri_update_forces, get_force_from_3c_trace, get_2c_der_force, &
-             get_idx_to_atom, print_ri_hfx, hfx_ri_pre_scf_calc_tensors, check_inverse
+             get_idx_to_atom, print_ri_hfx, hfx_ri_pre_scf_calc_tensors, check_inverse, &
+             hfx_ri_pre_scf_mo
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'hfx_ri'
 CONTAINS

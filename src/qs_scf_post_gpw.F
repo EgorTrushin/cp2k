@@ -87,6 +87,7 @@ MODULE qs_scf_post_gpw
    USE kinds,                           ONLY: default_path_length,&
                                               default_string_length,&
                                               dp
+   USE cc4s_export,                     ONLY: write_cc4s_coulomb_vertex
    USE kpoint_mo_dump,                  ONLY: write_kpoint_mo_data
    USE kpoint_types,                    ONLY: kpoint_type
    USE mao_wfn_analysis,                ONLY: mao_analysis
@@ -2180,6 +2181,17 @@ CONTAINS
                                          section_vals_get_subs_vals(input, "DFT%PRINT%MO_KP"))
             ELSE
                CPWARN("MO_KP is only available for k-point calculations, ignored for Gamma-only")
+            END IF
+         END IF
+
+         ! CC4S Coulomb vertex export (Gamma-point RI-HFX only)
+         IF (BTEST(cp_print_key_should_output(logger%iter_info, dft_section, "PRINT%CC4S"), &
+                   cp_p_file)) THEN
+            IF (.NOT. do_kpoints) THEN
+               CALL write_cc4s_coulomb_vertex(qs_env, &
+                                              section_vals_get_subs_vals(input, "DFT%PRINT%CC4S"))
+            ELSE
+               CPWARN("CC4S export requires Gamma-point, ignored for k-points")
             END IF
          END IF
 

@@ -687,6 +687,31 @@ CONTAINS
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "CC4S", &
+                                       description="Write CC4S input files (EigenEnergies + CoulombVertex) "// &
+                                       "from a converged RI-HFX Gamma-point calculation. "// &
+                                       "Requires &HF / &RI enabled in the input.", &
+                                       print_level=medium_print_level, add_last=add_last_numeric, filename="")
+      CALL keyword_create(keyword, __LOCATION__, name="OUTPUT_DIR", &
+                          description="Directory for CC4S output files.", &
+                          usage="OUTPUT_DIR /path/to/dir", default_c_val=".", &
+                          type_of_var=char_t)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="METHOD", &
+                          description="Correlation method(s) to include in cc4s.in. "// &
+                          "MP2: SecondOrderPerturbationTheory only. "// &
+                          "CCSD: MP2 + CCSD. "// &
+                          "CCSD_T: MP2 + CCSD + PerturbativeTriples. "// &
+                          "DRCCD: MP2 + Direct Ring CCD (RPA). "// &
+                          "APXRPA: MP2 + Drccd + ApxRpa.", &
+                          usage="METHOD CCSD_T", default_c_val="CCSD", &
+                          type_of_var=char_t)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL section_add_subsection(section, print_key)
+      CALL section_release(print_key)
+
       CALL create_mo_section(print_key, "MO_CUBES", "cube", [2, 2, 2], "STRIDE 1 1 1", high_print_level, "write_cube")
       CALL keyword_create(keyword, __LOCATION__, name="APPEND", &
                           description="append the cube files when they already exist", &
