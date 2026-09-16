@@ -646,7 +646,9 @@ CONTAINS
                               weights=weights_use, pw_pool=xc_pw_pool)
 
          ELSE
-            CALL xc_vxc_pw_create(vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_r, &
+            CALL xc_vxc_pw_create( &
+                                  tau_clamp_chain_rule=dft_control%low_spin_roks .AND. dft_control%qs_control%gapw, &
+                                  vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_r, &
                                   rho_g=rho_g, tau=tau, exc=exc, &
                                   xc_section=xc_section, &
                                   weights=weights_use, pw_pool=xc_pw_pool, &
@@ -836,7 +838,9 @@ CONTAINS
             ELSE
                ! virial untested
                CPASSERT(.NOT. compute_virial)
-               CALL xc_vxc_pw_create(vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_m_rspace, &
+               CALL xc_vxc_pw_create( &
+                                     tau_clamp_chain_rule=dft_control%low_spin_roks .AND. dft_control%qs_control%gapw, &
+                                     vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_m_rspace, &
                                      rho_g=rho_m_gspace, tau=tau, exc=exc_m, &
                                      xc_section=xc_section, &
                                      weights=weights_use, pw_pool=xc_pw_pool, &
@@ -897,7 +901,9 @@ CONTAINS
                ELSE
                   ! virial untested
                   CPASSERT(.NOT. compute_virial)
-                  CALL xc_vxc_pw_create(vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_m_rspace, &
+                  CALL xc_vxc_pw_create( &
+                                        tau_clamp_chain_rule=dft_control%low_spin_roks .AND. dft_control%qs_control%gapw, &
+                                        vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_m_rspace, &
                                         rho_g=rho_m_gspace, tau=tau, exc=exc_m, &
                                         xc_section=xc_section, &
                                         weights=weights_use, pw_pool=xc_pw_pool, &
@@ -943,7 +949,9 @@ CONTAINS
             ELSE
                ! virial untested
                CPASSERT(.NOT. compute_virial)
-               CALL xc_vxc_pw_create(vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_r, &
+               CALL xc_vxc_pw_create( &
+                                     tau_clamp_chain_rule=dft_control%low_spin_roks .AND. dft_control%qs_control%gapw, &
+                                     vxc_rho=my_vxc_rho, vxc_tau=my_vxc_tau, rho_r=rho_r, &
                                      rho_g=rho_g, tau=tau, exc=exc_m, &
                                      xc_section=xc_section, &
                                      weights=weights_use, pw_pool=xc_pw_pool, &

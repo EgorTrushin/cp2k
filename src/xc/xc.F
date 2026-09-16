@@ -152,10 +152,11 @@ CONTAINS
 !> \note
 !>      if any of the functionals is gradient corrected the full gradient is
 !>      added to the rho set
+!> \param tau_clamp_chain_rule Differentiate the LibXC tau clamp for GAPW low-spin ROKS
 ! **************************************************************************************************
    SUBROUTINE xc_rho_set_and_dset_create(rho_set, deriv_set, deriv_order, &
                                          rho_r, rho_g, tau, xc_section, pw_pool, &
-                                         weights, calc_potential)
+                                         weights, calc_potential, tau_clamp_chain_rule)
 
       TYPE(xc_rho_set_type)                              :: rho_set
       TYPE(xc_derivative_set_type)                       :: deriv_set
@@ -166,6 +167,7 @@ CONTAINS
       TYPE(pw_pool_type), POINTER                        :: pw_pool
       TYPE(pw_r3d_rs_type), POINTER                      :: weights
       LOGICAL, INTENT(in)                                :: calc_potential
+      LOGICAL, INTENT(IN), OPTIONAL                      :: tau_clamp_chain_rule
 
       CHARACTER(len=*), PARAMETER :: routineN = 'xc_rho_set_and_dset_create'
 
@@ -195,6 +197,8 @@ CONTAINS
                              rho_cutoff=section_get_rval(xc_section, "density_cutoff"), &
                              drho_cutoff=section_get_rval(xc_section, "gradient_cutoff"), &
                              tau_cutoff=section_get_rval(xc_section, "tau_cutoff"))
+
+      IF (PRESENT(tau_clamp_chain_rule)) rho_set%tau_clamp_chain_rule = tau_clamp_chain_rule
 
       ! Calculate density stuff, for example the gradient of rho, according to the functional needs
       CALL xc_rho_set_update(rho_set, rho_r, rho_g, tau, &
@@ -471,9 +475,10 @@ CONTAINS
 !> \note
 !>      Beware: some really dirty pointer handling!
 !>      energy should be kept consistent with xc_exc_calc
+!> \param tau_clamp_chain_rule Differentiate the LibXC tau clamp for GAPW low-spin ROKS
 ! **************************************************************************************************
    SUBROUTINE xc_vxc_pw_create(vxc_rho, vxc_tau, exc, rho_r, rho_g, tau, xc_section, weights, &
-                               pw_pool, compute_virial, virial_xc, exc_r)
+                               pw_pool, compute_virial, virial_xc, exc_r, tau_clamp_chain_rule)
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: vxc_rho, vxc_tau
       REAL(KIND=dp), INTENT(out)                         :: exc
       TYPE(pw_r3d_rs_type), DIMENSION(:), POINTER        :: rho_r, tau
@@ -484,6 +489,7 @@ CONTAINS
       LOGICAL                                            :: compute_virial
       REAL(KIND=dp), DIMENSION(3, 3), INTENT(OUT)        :: virial_xc
       TYPE(pw_r3d_rs_type), INTENT(INOUT), OPTIONAL      :: exc_r
+      LOGICAL, INTENT(IN), OPTIONAL                      :: tau_clamp_chain_rule
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'xc_vxc_pw_create'
       INTEGER, DIMENSION(2), PARAMETER :: norm_drho_spin_name = [deriv_norm_drhoa, deriv_norm_drhob]
@@ -534,7 +540,7 @@ CONTAINS
                                       deriv_order=1, rho_r=rho_r, rho_g=rho_g, tau=tau, &
                                       xc_section=xc_section, &
                                       pw_pool=pw_pool, weights=weights, &
-                                      calc_potential=.TRUE.)
+                                      calc_potential=.TRUE., tau_clamp_chain_rule=tau_clamp_chain_rule)
 
       CALL section_vals_val_get(xc_section, "XC_GRID%XC_DERIV", &
                                 i_val=xc_deriv_method_id)

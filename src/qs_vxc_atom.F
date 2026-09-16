@@ -786,6 +786,8 @@ CONTAINS
                                       drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
                CALL xc_rho_set_create(rho_set_s, bounds, rho_cutoff=density_cut, &
                                       drho_cutoff=gradient_cut, tau_cutoff=tau_cut)
+               rho_set_h%tau_clamp_chain_rule = dft_control%low_spin_roks .AND. dft_control%qs_control%gapw
+               rho_set_s%tau_clamp_chain_rule = rho_set_h%tau_clamp_chain_rule
 
                ! allocate the required 3d arrays where to store rho and drho
                CALL xc_rho_set_atom_update(rho_set_h, needs, nspins, bounds)

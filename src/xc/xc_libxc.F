@@ -1440,7 +1440,7 @@ CONTAINS
       CHARACTER(LEN=default_string_length)     :: func_name
       INTEGER                                  :: handle, iw, npoints
       INTEGER, DIMENSION(2, 3)                 :: bo
-      LOGICAL                                  :: has_laplace
+      LOGICAL                                  :: has_laplace, tau_clamp_chain_rule
       REAL(KIND=dp)                            :: epsilon_rho, epsilon_tau, func_scale
       TYPE(libxc_worker_set_type), POINTER     :: workers
       TYPE(section_vals_type), POINTER         :: no_params
@@ -1471,6 +1471,7 @@ CONTAINS
       TYPE(xc_f03_func_info_t)                 :: xc_info
 
       CALL timeset(routineN, handle)
+      tau_clamp_chain_rule = rho_set%tau_clamp_chain_rule
 
       ! Only "everything up to grad_deriv" is supported. Asking for a single
       ! derivative order in isolation is rejected here rather than further down,
@@ -1970,7 +1971,7 @@ CONTAINS
 !$OMP SHARED(e_tau_a_tau_a,e_tau_a_tau_b,e_tau_b_tau_b),&
 !$OMP SHARED(e_rhoa_rhoa_rhoa,e_rhoa_rhoa_rhob,e_rhoa_rhob_rhob,e_rhob_rhob_rhob),&
 !$OMP SHARED(grad_deriv,npoints),&
-!$OMP SHARED(func_name,func_scale,workers)
+!$OMP SHARED(func_name,func_scale,workers,tau_clamp_chain_rule)
 
       CALL libxc_spin_polarized_calc(rhoa=rhoa, rhob=rhob, norm_drho=norm_drho, &
                                      norm_drhoa=norm_drhoa, norm_drhob=norm_drhob, laplace_rhoa=laplace_rhoa, &
@@ -2018,7 +2019,8 @@ CONTAINS
                                      e_${'_'.join(descs)}$=e_${'_'.join(descs)}$, &
 #:endfor
                                      grad_deriv=grad_deriv, npoints=npoints, &
-                                     func_name=func_name, sc=func_scale, workers=workers)
+                                     func_name=func_name, sc=func_scale, workers=workers, &
+                                     tau_clamp_chain_rule=tau_clamp_chain_rule)
 
 !$OMP END PARALLEL
 
@@ -2503,7 +2505,7 @@ SUBROUTINE libxc_spin_polarized_calc(rhoa, rhob, norm_drho, norm_drhoa, &
 #:for descs, arr, idx in mgga_all
                                      e_${'_'.join(descs)}$, &
 #:endfor
-                                     grad_deriv, npoints, func_name, sc, workers)
+                                     grad_deriv, npoints, func_name, sc, workers, tau_clamp_chain_rule)
 
 REAL(KIND=dp), DIMENSION(*), INTENT(IN)            :: rhoa, rhob, norm_drho, norm_drhoa, &
                                                       norm_drhob, laplace_rhoa, &
@@ -2534,6 +2536,7 @@ TYPE(libxc_worker_set_type), INTENT(INOUT), TARGET :: workers
 INTEGER                                            :: bsize, family, i, i0, ib, ii, ithread, &
                                                       nb, nblocks, nthreads
 INTEGER(C_SIZE_T)                                  :: np
+LOGICAL, INTENT(IN)                                :: tau_clamp_chain_rule
 LOGICAL                                            :: is_gga, is_mgga
 
 ithread = 0
@@ -2733,6 +2736,34 @@ BLOCK
             CALL xc_f03_lda(w%func, np, w%rho(1, 1), &
                             w%exc(1), w%vrho(1, 1), w%v2rho2(1, 1), w%v3rho3(1, 1))
          END SELECT
+      END IF
+
+      ! GAPW's approximate densities can violate tau >= |grad rho|^2/(8 rho).
+      ! Differentiate the energy's existing clamp rather than treating clipped
+      ! tau as an independent input. The opt-in keeps other code paths unchanged.
+      IF (tau_clamp_chain_rule .AND. is_mgga) THEN
+         CPASSERT(grad_deriv <= 1)
+      END IF
+      IF (tau_clamp_chain_rule .AND. is_mgga .AND. grad_deriv == 1) THEN
+         DO i = 1, nb
+            ii = i0 + i
+            IF (tau_a(ii) < w%tau(1, i)) THEN
+               IF (w%rho(1, i) > eps_rho) THEN
+                  w%vrho(1, i) = w%vrho(1, i) - &
+                     w%vtau(1, i)*w%sigma(1, i)/(8.0_dp*w%rho(1, i)**2)
+               END IF
+               w%vsigma(1, i) = w%vsigma(1, i) + w%vtau(1, i)/(8.0_dp*MAX(w%rho(1, i), eps_rho))
+               w%vtau(1, i) = 0.0_dp
+            END IF
+            IF (tau_b(ii) < w%tau(2, i)) THEN
+               IF (w%rho(2, i) > eps_rho) THEN
+                  w%vrho(2, i) = w%vrho(2, i) - &
+                     w%vtau(2, i)*w%sigma(3, i)/(8.0_dp*w%rho(2, i)**2)
+               END IF
+               w%vsigma(3, i) = w%vsigma(3, i) + w%vtau(2, i)/(8.0_dp*MAX(w%rho(2, i), eps_rho))
+               w%vtau(2, i) = 0.0_dp
+            END IF
+         END DO
       END IF
 
       ! accumulate; one loop per group of derivatives, selected by the order

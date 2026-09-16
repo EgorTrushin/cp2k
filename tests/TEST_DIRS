@@ -227,6 +227,9 @@ QS/regtest-ri-laplace-mp2-cubic-2                           libint libxc !ifx
 QS/regtest-gauxc-gpw-mol                                    gauxc
 QS/regtest-lsroks                                           libint !ifx
 QS/regtest-gapw-lsroks
+QS/regtest-gapw-lsroks-hybrid                               libint
+QS/regtest-gapw-lsroks-meta                                 libxc
+QS/regtest-gapw-lsroks-meta-hybrid                          libxc libint
 QMMM/QS/regtest-cdft                                        parallel mpiranks%2==0
 SE/regtest-4
 QS/regtest-gpw-9                                            libxc

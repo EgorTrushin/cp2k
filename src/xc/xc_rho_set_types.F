@@ -78,6 +78,8 @@ MODULE xc_rho_set_types
    TYPE xc_rho_set_type
       INTEGER, DIMENSION(2, 3) :: local_bounds = -1
       REAL(kind=dp) :: rho_cutoff = EPSILON(0.0_dp), drho_cutoff = EPSILON(0.0_dp), tau_cutoff = EPSILON(0.0_dp)
+      ! Opt-in chain rule for the spin-polarized LibXC tau clamp (first derivatives).
+      LOGICAL :: tau_clamp_chain_rule = .FALSE.
       TYPE(xc_rho_cflags_type) :: owns = xc_rho_cflags_type(), has = xc_rho_cflags_type()
       ! for spin restricted systems
       REAL(KIND=dp), DIMENSION(:, :, :), CONTIGUOUS, POINTER :: rho => NULL()
@@ -115,6 +117,7 @@ CONTAINS
       IF (PRESENT(rho_cutoff)) rho_set%rho_cutoff = rho_cutoff
       IF (PRESENT(drho_cutoff)) rho_set%drho_cutoff = drho_cutoff
       IF (PRESENT(tau_cutoff)) rho_set%tau_cutoff = tau_cutoff
+      rho_set%tau_clamp_chain_rule = .FALSE.
       rho_set%local_bounds = local_bounds
       CALL xc_rho_cflags_setall(rho_set%owns, .TRUE.)
       CALL xc_rho_cflags_setall(rho_set%has, .FALSE.)
