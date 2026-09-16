@@ -230,6 +230,8 @@ QS/regtest-gapw-lsroks
 QS/regtest-gapw-lsroks-hybrid                               libint
 QS/regtest-gapw-lsroks-meta                                 libxc
 QS/regtest-gapw-lsroks-meta-hybrid                          libxc libint
+QS/regtest-gapw-lsroks-gauxc-pbe                          gauxc
+QS/regtest-gapw-lsroks-skala                              gauxc gauxc_onedft
 QMMM/QS/regtest-cdft                                        parallel mpiranks%2==0
 SE/regtest-4
 QS/regtest-gpw-9                                            libxc

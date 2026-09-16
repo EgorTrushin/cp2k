@@ -694,6 +694,10 @@ CONTAINS
          END IF
          IF (dft_control%use_gauxc) THEN
             IF (native_skala_evaluator) THEN
+               IF (gapw .AND. dft_control%low_spin_roks) THEN
+                  CALL cp_abort(__LOCATION__, &
+                                "GAPW low spin ROKS requires the molecular GauXC grid, not native Skala grids.")
+               END IF
                CALL ensure_native_skala_grid_scope(xc_section)
                gapw_representation = skala_gapw_representation(xc_section)
                IF (gapw .OR. gapw_xc) THEN
