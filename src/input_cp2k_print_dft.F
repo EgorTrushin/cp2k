@@ -704,9 +704,10 @@ CONTAINS
       CALL section_release(print_key)
 
       CALL cp_print_key_section_create(print_key, __LOCATION__, "CC4S", &
-                                       description="Export molecular CC4S input from restricted HF with RI_FLAVOR MO. "// &
-                                       "Requires nonperiodic boundaries, XC_FUNCTIONAL NONE, HF FRACTION 1, "// &
-                                       "and the Coulomb interaction and RI metric. Dense, small-molecule implementation.", &
+                                       description="Export CC4S input from restricted HF with RI_FLAVOR MO. "// &
+                                       "Requires XC_FUNCTIONAL NONE, HF FRACTION 1 and identical HF and RI operators. "// &
+                                       "Use COULOMB for molecules or TRUNCATED for neutral, fully periodic Gamma-point cells. "// &
+                                       "Dense implementation for small systems; no k-point sampling.", &
                                        print_level=debug_print_level + 1, add_last=add_last_numeric, filename="")
       CALL keyword_create(keyword, __LOCATION__, name="OUTPUT_DIR", &
                           description="Directory for CC4S files; missing parent directories are created. "// &

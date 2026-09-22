@@ -6,15 +6,18 @@
 !--------------------------------------------------------------------------------------------------!
 
 ! **************************************************************************************************
-!> \brief Molecular CC4S export from a converged restricted RI-HF calculation.
+!> \brief Molecular and Gamma-point periodic CC4S export from restricted RI-HF.
 !>        Based on the original cc4s branch (caa9943228).
 !>        RI_FLAVOR MO stores a weighted AO-pair triangle. The full vertex is
 !>        C^T (T + T^T) C, dressed with the symmetric Coulomb inverse square root.
 !>        The SCF tensors and orbitals are read only. Dense assembly limits this
-!>        implementation to small molecules; only the source rank transforms/writes.
+!>        implementation to small systems; only the source rank transforms/writes.
 ! **************************************************************************************************
 MODULE cc4s_export
-   USE cell_types,                      ONLY: cell_type
+   USE cell_types,                      ONLY: cell_type,&
+                                              plane_distance,&
+                                              use_perd_none,&
+                                              use_perd_xyz
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm
@@ -38,6 +41,7 @@ MODULE cc4s_export
         dbt_iterator_start, dbt_iterator_stop, dbt_iterator_type, dbt_nblks_total, dbt_type
    USE hfx_types,                       ONLY: hfx_type
    USE input_constants,                 ONLY: do_potential_coulomb,&
+                                              do_potential_truncated,&
                                               sic_none,&
                                               xc_none
    USE input_cp2k_hfx,                  ONLY: ri_mo
@@ -80,8 +84,9 @@ CONTAINS
          nao, nmo, nri, nstored, output_unit, poisson_periodic
       INTEGER, DIMENSION(2)                              :: dims2
       INTEGER, DIMENSION(3)                              :: dims3
-      LOGICAL                                            :: do_kpoints
-      REAL(dp)                                           :: amp_conv, energy_conv, fermi_energy, &
+      LOGICAL                                            :: do_kpoints, periodic
+      REAL(dp)                                           :: amp_conv, cutoff_radius, energy_conv, &
+                                                            fermi_energy, max_cutoff, &
                                                             max_memory_mb, memory_mb
       REAL(dp), ALLOCATABLE                              :: coeff(:, :), dressed(:, :), &
                                                             eigenvalues(:), eri(:, :, :), &
@@ -127,10 +132,10 @@ CONTAINS
       CASE DEFAULT
          CPABORT("CC4S: unsupported method")
       END SELECT
-      IF (max_iter < 1 .OR. energy_conv <= 0.0_dp .OR. amp_conv <= 0.0_dp .OR. max_memory_mb <= 0.0_dp) then
-        CALL cp_abort(__LOCATION__, &
+      IF (max_iter < 1 .OR. energy_conv <= 0.0_dp .OR. amp_conv <= 0.0_dp .OR. max_memory_mb <= 0.0_dp) THEN
+         CALL cp_abort(__LOCATION__, &
                        "CC4S: iteration, convergence and memory limits must be positive")
-      end if
+      END IF
       IF (LEN_TRIM(outdir) == 0) THEN
          CPABORT("CC4S: OUTPUT_DIR must not be empty")
       END IF
@@ -144,18 +149,26 @@ CONTAINS
          CPABORT("CC4S: export requires a converged SCF")
       END IF
       CALL section_vals_val_get(input, "DFT%POISSON%PERIODIC", i_val=poisson_periodic)
-      IF (do_kpoints .OR. ANY(cell%perd /= 0) .OR. poisson_periodic /= 0) then
-        CALL cp_abort(__LOCATION__, &
-                       "CC4S: only nonperiodic molecules are supported; set CELL and POISSON PERIODIC NONE")
-      end if
-      IF (dft_control%nspins /= 1 .OR. dft_control%uks .OR. dft_control%roks .OR. dft_control%smear) then
-        CALL cp_abort(__LOCATION__, &
+      IF (do_kpoints) THEN
+         CPABORT("CC4S: k-point sampling is unsupported")
+      END IF
+      periodic = ALL(cell%perd == 1) .AND. poisson_periodic == use_perd_xyz
+      IF (.NOT. periodic .AND. &
+          (ANY(cell%perd /= 0) .OR. poisson_periodic /= use_perd_none)) THEN
+         CALL cp_abort(__LOCATION__, &
+                       "CC4S: CELL and POISSON must both use PERIODIC NONE or both PERIODIC XYZ")
+      END IF
+      IF (periodic .AND. dft_control%charge /= 0) THEN
+         CPABORT("CC4S: periodic cells must be neutral")
+      END IF
+      IF (dft_control%nspins /= 1 .OR. dft_control%uks .OR. dft_control%roks .OR. dft_control%smear) THEN
+         CALL cp_abort(__LOCATION__, &
                        "CC4S: a restricted closed-shell reference without smearing is required")
-      end if
-      IF (dft_control%do_admm .OR. dft_control%dft_plus_u .OR. dft_control%sic_method_id /= sic_none) then
-        CALL cp_abort(__LOCATION__, &
+      END IF
+      IF (dft_control%do_admm .OR. dft_control%dft_plus_u .OR. dft_control%sic_method_id /= sic_none) THEN
+         CALL cp_abort(__LOCATION__, &
                        "CC4S: ADMM, DFT+U and self-interaction corrections are unsupported")
-      end if
+      END IF
       CALL section_vals_val_get(input, "DFT%XC%XC_FUNCTIONAL%_SECTION_PARAMETERS_", i_val=functional)
       IF (functional /= xc_none) THEN
          CALL cp_abort(__LOCATION__, &
@@ -168,20 +181,36 @@ CONTAINS
          CALL cp_abort(__LOCATION__, &
                        "CC4S: exactly one HF section is required")
       END IF
-      IF (ABS(x_data(1, 1)%general_parameter%fraction - 1.0_dp) > 1.0e-14_dp) then
-        CPABORT("CC4S: HF FRACTION must be 1")
-      end if
+      IF (ABS(x_data(1, 1)%general_parameter%fraction - 1.0_dp) > 1.0e-14_dp) THEN
+         CPABORT("CC4S: HF FRACTION must be 1")
+      END IF
       IF (.NOT. ASSOCIATED(x_data(1, 1)%ri_data)) THEN
          CPABORT("CC4S: enable HF/RI with RI_FLAVOR MO")
       END IF
       IF (x_data(1, 1)%ri_data%flavor /= ri_mo) THEN
          CPABORT("CC4S: HF/RI requires RI_FLAVOR MO")
       END IF
-      IF (.NOT. x_data(1, 1)%ri_data%same_op .OR. &
-          x_data(1, 1)%ri_data%hfx_pot%potential_type /= do_potential_coulomb) then
-        CALL cp_abort(__LOCATION__, &
-                       "CC4S: HF interaction and RI metric must both be COULOMB")
-      end if
+      cutoff_radius = 0.0_dp
+      IF (periodic) THEN
+         IF (.NOT. x_data(1, 1)%ri_data%same_op .OR. &
+             x_data(1, 1)%ri_data%hfx_pot%potential_type /= do_potential_truncated) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "CC4S: periodic export requires TRUNCATED HF interaction and the same RI metric; use RI_METRIC HFX")
+         END IF
+         cutoff_radius = x_data(1, 1)%ri_data%hfx_pot%cutoff_radius
+         max_cutoff = 0.5_dp*MIN(plane_distance(1, 0, 0, cell), &
+                                 plane_distance(0, 1, 0, cell), plane_distance(0, 0, 1, cell))
+         IF (cutoff_radius <= 0.0_dp .OR. cutoff_radius >= max_cutoff) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "CC4S: positive HF CUTOFF_RADIUS must be smaller than half the minimal cell plane spacing")
+         END IF
+      ELSE
+         IF (.NOT. x_data(1, 1)%ri_data%same_op .OR. &
+             x_data(1, 1)%ri_data%hfx_pot%potential_type /= do_potential_coulomb) THEN
+            CALL cp_abort(__LOCATION__, &
+                          "CC4S: molecular HF interaction and RI metric must both be COULOMB")
+         END IF
+      END IF
 
       CALL get_mo_set(mos(1), mo_coeff=mo_coeff, homo=homo, nmo=nstored, nao=nao, &
                       occupation_numbers=occupations)
@@ -189,10 +218,10 @@ CONTAINS
          CPABORT("CC4S: no occupied orbitals")
       END IF
       IF (ANY(ABS(occupations(:homo) - 2.0_dp) > 1.0e-12_dp) .OR. &
-          ANY(ABS(occupations(homo + 1:)) > 1.0e-12_dp)) then
-        CALL cp_abort(__LOCATION__, &
+          ANY(ABS(occupations(homo + 1:)) > 1.0e-12_dp)) THEN
+         CALL cp_abort(__LOCATION__, &
                        "CC4S: occupations must be 2 below the HOMO and 0 above")
-      end if
+      END IF
       IF (frozen < 0 .OR. frozen >= homo) THEN
          CALL cp_abort(__LOCATION__, &
                        "CC4S: N_FROZEN_CORE must leave at least one occupied orbital")
@@ -211,10 +240,10 @@ CONTAINS
       IF (memory_mb > max_memory_mb) THEN
          CPABORT("CC4S: dense export exceeds MAX_MEMORY [MB]")
       END IF
-      IF (scf_control%eps_scf > 1.0e-10_dp) then
-        CALL cp_warn(__LOCATION__, &
+      IF (scf_control%eps_scf > 1.0e-10_dp) THEN
+         CALL cp_warn(__LOCATION__, &
                       "CC4S: tighten EPS_SCF to 1e-10 or smaller for accurate canonical HF orbitals")
-      end if
+      END IF
 
       IF (para_env%is_source()) THEN
          CALL m_mkdir(outdir, io_status)
@@ -266,7 +295,7 @@ CONTAINS
 
       IF (para_env%is_source()) THEN
          ALLOCATE (dressed(nri, nao*nao), half(nri, nmo), gamma(nri, nmo, nmo), pair(nri))
-         ! The metric is symmetric because both operators are Coulomb.
+         ! Identical HF and RI operators give a symmetric inverse square root.
          CALL DGEMM('T', 'N', nri, nao*nao, nri, 1.0_dp, metric, nri, eri, nri, 0.0_dp, dressed, nri)
          gamma = 0.0_dp
          DO inu = 1, nao
@@ -287,13 +316,19 @@ CONTAINS
          END DO
          CALL write_eigen_energies_files(outdir, nmo, homo - frozen, &
                                          eigenvalues(frozen + 1:frozen + nmo), fermi_energy)
-         CALL write_coulomb_vertex_files(outdir, nri, nmo, gamma)
+         ! A finite-range periodic interaction has no Ewald/Madelung correction.
+         ! Preserve the SCF eigenenergies and its live truncated-interaction vertex.
+         CALL write_coulomb_vertex_files(outdir, nri, nmo, gamma, periodic, cutoff_radius, cell%hmat)
          CALL write_cc4s_in(outdir, method, max_iter, energy_conv, amp_conv)
          IF (output_unit > 0) THEN
             WRITE (output_unit, '(T3,A,3I8)') "CC4S| Auxiliary / active / occupied orbitals: ", nri, nmo, homo - frozen
             WRITE (output_unit, '(T3,A,ES25.16)') "CC4S| Vertex norm squared: ", SUM(gamma**2)
             WRITE (output_unit, '(T3,A,ES25.16)') "CC4S| Eigenenergy sum: ", SUM(eigenvalues(frozen + 1:frozen + nmo))
             WRITE (output_unit, '(T3,A,A)') "CC4S| Files written to: ", TRIM(outdir)
+            IF (periodic) THEN
+               WRITE (output_unit, '(T3,A)') "CC4S| Gamma-point TRUNCATED interaction; no added Madelung term."
+               WRITE (output_unit, '(T3,A,ES25.16)') "CC4S| Coulomb cutoff radius [bohr]: ", cutoff_radius
+            END IF
             WRITE (output_unit, '(T3,A)') "CC4S| RI-HFX fits exchange; the SCF Hartree term uses the CP2K grid."
          END IF
          DEALLOCATE (dressed, half, gamma, pair)
@@ -471,14 +506,19 @@ CONTAINS
 !> \param nRI Number of auxiliary functions
 !> \param nMO Number of active canonical orbitals
 !> \param gamma Coulomb vertex in auxiliary-orbital-orbital order
+!> \param periodic Whether the cell is three-dimensionally periodic at Gamma
+!> \param cutoff_radius Truncated Coulomb cutoff in bohr (zero for molecular Coulomb)
+!> \param hmat Cell vectors as columns, in bohr
 ! **************************************************************************************************
-   SUBROUTINE write_coulomb_vertex_files(outdir, nRI, nMO, gamma)
+   SUBROUTINE write_coulomb_vertex_files(outdir, nRI, nMO, gamma, periodic, cutoff_radius, hmat)
       CHARACTER(LEN=*), INTENT(IN)                       :: outdir
       INTEGER, INTENT(IN)                                :: nRI, nMO
       REAL(KIND=dp), INTENT(IN)                          :: gamma(nRI, nMO, nMO)
+      LOGICAL, INTENT(IN)                                :: periodic
+      REAL(KIND=dp), INTENT(IN)                          :: cutoff_radius, hmat(3, 3)
 
       CHARACTER(LEN=default_path_length)                 :: fname
-      INTEGER                                            :: io_status, iunit
+      INTEGER                                            :: i, io_status, iunit
 
       fname = TRIM(outdir)//'/CoulombVertex.yaml'
       CALL open_export_file(iunit, fname)
@@ -495,6 +535,21 @@ CONTAINS
       WRITE (iunit, '(A)') 'elements:'
       WRITE (iunit, '(A)') '  type: IeeeBinaryFile'
       WRITE (iunit, '(A)') 'unit: 1.0'
+      WRITE (iunit, '(A)') 'metaData:'
+      IF (periodic) THEN
+         WRITE (iunit, '(A)') '  boundaryConditions: "periodic-3d-gamma"'
+         WRITE (iunit, '(A)') '  interactionPotential: "TRUNCATED"'
+         WRITE (iunit, '(A,ES25.16)') '  cutoffRadiusBohr: ', cutoff_radius
+         WRITE (iunit, '(A)') '  madelungCorrection: 0.0'
+         WRITE (iunit, '(A)') '  latticeVectorsBohr:'
+         DO i = 1, 3
+            WRITE (iunit, '(A,ES25.16,A,ES25.16,A,ES25.16,A)') &
+               '  - [', hmat(1, i), ', ', hmat(2, i), ', ', hmat(3, i), ']'
+         END DO
+      ELSE
+         WRITE (iunit, '(A)') '  boundaryConditions: "molecular"'
+         WRITE (iunit, '(A)') '  interactionPotential: "COULOMB"'
+      END IF
       CALL close_file(iunit)
 
       fname = TRIM(outdir)//'/CoulombVertex.elements'
