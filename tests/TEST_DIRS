@@ -95,6 +95,7 @@ ATOM/regtest-2
 QS/regtest-kp-1-spglib                                      libint spglib !ifx
 QS/regtest-gpw-2-3
 QS/regtest-nmr-6
+QS/regtest-cc4s                                            libint
 QS/regtest-hfx-ri                                           libint !ifx
 QS/regtest-hfx-wfn-fitting                                  libint libxc !ifx
 Fist/regtest-1-4
