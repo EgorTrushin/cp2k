@@ -86,6 +86,7 @@ QS/regtest-ec-force                                         libint !ifx
 QS/regtest-gw-cubic                                         libint !ifx
 DFTB/regtest-scc-2                                          spglib
 QS/regtest-acc-3                                            libint !ifx
+QS/regtest-cc4s                                            libint
 QS/regtest-hfx-ri                                           libint !ifx
 QS/regtest-hfx-wfn-fitting                                  libint libxc !ifx
 QS/regtest-dcdft-force                                      libint libxc !ifx

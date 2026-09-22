@@ -703,6 +703,49 @@ CONTAINS
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 
+      CALL cp_print_key_section_create(print_key, __LOCATION__, "CC4S", &
+                                       description="Export molecular CC4S input from restricted HF with RI_FLAVOR MO. "// &
+                                       "Requires nonperiodic boundaries, XC_FUNCTIONAL NONE, HF FRACTION 1, "// &
+                                       "and the Coulomb interaction and RI metric. Dense, small-molecule implementation.", &
+                                       print_level=debug_print_level + 1, add_last=add_last_numeric, filename="")
+      CALL keyword_create(keyword, __LOCATION__, name="OUTPUT_DIR", &
+                          description="Directory for CC4S files; missing parent directories are created. "// &
+                          "Files are replaced on each export.", &
+                          default_c_val=".", type_of_var=char_t)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="METHOD", &
+                          description="Method for the generated cc4s.in driver.", default_i_val=2, &
+                          enum_c_vals=s2a("MP2", "CCSD", "CCSD_T"), enum_i_vals=[1, 2, 3], &
+                          enum_desc=s2a("MP2", "MP2 and CCSD", "MP2, CCSD and perturbative triples"))
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="N_FROZEN_CORE", &
+                          description="Number of lowest occupied orbitals omitted before writing.", default_i_val=0)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="MAX_ITER", &
+                          description="Maximum CC4S coupled-cluster iterations.", default_i_val=100)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="ENERGY_CONVERGENCE", &
+                          description="CC4S correlation-energy convergence in Hartree.", &
+                          default_r_val=1.0e-10_dp)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="AMPLITUDES_CONVERGENCE", &
+                          description="CC4S amplitude convergence threshold.", &
+                          default_r_val=1.0e-10_dp)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="MAX_MEMORY", &
+                          description="Maximum estimated dense export workspace per MPI rank in MB (excluding SCF storage).", &
+                          default_r_val=1024.0_dp)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL section_add_subsection(section, print_key)
+      CALL section_release(print_key)
+
       CALL create_mo_section(print_key, "MO_CUBES", "cube", [2, 2, 2], "STRIDE 1 1 1", high_print_level, "write_cube")
       CALL keyword_create(keyword, __LOCATION__, name="APPEND", &
                           description="append the cube files when they already exist", &

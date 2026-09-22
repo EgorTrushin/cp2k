@@ -79,6 +79,7 @@ list(
   bse_util.F
   bsse.F
   casino_utils.F
+  cc4s_export.F
   cell_methods.F
   colvar_methods.F
   colvar_utils.F
@@ -1446,6 +1447,7 @@ list(
   CP2K_SRCS_C
   sockets.c
   base/machine_cpuid.c
+  base/machine_file.c
   base/openmp_trace.c
   base/openmp_trace.c
   common/cp_data_dir.c)
