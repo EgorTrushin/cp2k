@@ -36,6 +36,7 @@ MODULE qs_energy_types
                        eeq = 0.0_dp, &
                        el_stat = 0.0_dp, &
                        ex = 0.0_dp, &
+                       oep_rpa = 0.0_dp, & ! self-consistent RPA-OEP correlation
                        exc = 0.0_dp, &
                        exc_aux_fit = 0.0_dp, &
                        exc1 = 0.0_dp, &
@@ -169,6 +170,7 @@ CONTAINS
          qs_energy%qmmm_el = 0.0_dp
          qs_energy%qmmm_nu = 0.0_dp
          qs_energy%ex = 0.0_dp
+         qs_energy%oep_rpa = 0.0_dp
          qs_energy%exc = 0.0_dp
          qs_energy%exc_aux_fit = 0.0_dp
          qs_energy%exc1 = 0.0_dp

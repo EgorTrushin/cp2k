@@ -42,7 +42,8 @@ MODULE qs_oep
                                               cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr
-   USE input_constants,                 ONLY: do_potential_coulomb
+   USE input_constants,                 ONLY: do_potential_coulomb,&
+                                              xc_none
    USE input_section_types,             ONLY: section_vals_get,&
                                               section_vals_get_subs_vals,&
                                               section_vals_type,&
@@ -57,6 +58,7 @@ MODULE qs_oep
    USE orbital_transformation_matrices, ONLY: init_spherical_harmonics
    USE particle_methods,                ONLY: get_particle_set
    USE particle_types,                  ONLY: particle_type
+   USE qs_energy_types,                 ONLY: qs_energy_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
    USE qs_interactions,                 ONLY: init_interaction_radii_orb_basis
@@ -66,6 +68,7 @@ MODULE qs_oep
                                               qs_oep_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_type
+   USE qs_oep_rpa,                      ONLY: oep_rpa_solve
    USE scf_control_types,               ONLY: scf_control_type
 #include "./base/base_uses.f90"
 
@@ -87,18 +90,18 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: hf_section
       LOGICAL, INTENT(IN)                                :: calculate_forces
 
-      INTEGER                                            :: nrep, potential
-      LOGICAL                                            :: ace, enabled, kpoints
-      REAL(KIND=dp)                                      :: fraction, threshold
+      INTEGER                                            :: functional, nrep, nw, potential
+      LOGICAL                                            :: ace, do_rpa, enabled, kpoints
+      REAL(KIND=dp)                                      :: fraction, threshold, x0
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dft_control_type), POINTER                    :: dft
       TYPE(scf_control_type), POINTER                    :: scf
-      TYPE(section_vals_type), POINTER                   :: section
+      TYPE(section_vals_type), POINTER                   :: input, rpa_section, section
 
       section => section_vals_get_subs_vals(hf_section, "OEP")
       CALL section_vals_get(section, explicit=enabled)
       IF (.NOT. enabled) RETURN
-      CALL get_qs_env(qs_env, dft_control=dft, scf_control=scf, cell=cell, do_kpoints=kpoints)
+      CALL get_qs_env(qs_env, dft_control=dft, scf_control=scf, cell=cell, do_kpoints=kpoints, input=input)
       IF (calculate_forces) CPABORT("EXX-OEP currently supports ENERGY calculations only")
       IF (dft%nspins /= 1 .OR. dft%roks) CPABORT("EXX-OEP requires a closed-shell restricted calculation")
       IF (ANY(cell%perd /= 0) .OR. kpoints) CPABORT("EXX-OEP requires CELL PERIODIC NONE and no KPOINTS")
@@ -115,10 +118,22 @@ CONTAINS
       IF (potential /= do_potential_coulomb) CPABORT("Molecular EXX-OEP requires the COULOMB interaction")
       CALL section_vals_val_get(hf_section, "ACE%ACTIVE", l_val=ace)
       IF (ace) CPABORT("EXX-OEP requires the full exchange matrix; disable ACE")
+      rpa_section => section_vals_get_subs_vals(section, "RPA")
+      CALL section_vals_val_get(rpa_section, "_SECTION_PARAMETERS_", l_val=do_rpa)
+      IF (do_rpa) THEN
+         CALL section_vals_val_get(rpa_section, "THR_FAI_RI", r_val=threshold)
+         CALL section_vals_val_get(rpa_section, "QUADRATURE_POINTS", i_val=nw)
+         CALL section_vals_val_get(rpa_section, "FREQUENCY_SCALE", r_val=x0)
+         IF (threshold <= 0.0_dp) CPABORT("RPA-OEP THR_FAI_RI must be positive")
+         IF (nw < 1 .OR. x0 <= 0.0_dp) CPABORT("RPA-OEP quadrature size and frequency scale must be positive")
+         IF (ASSOCIATED(qs_env%mp2_env)) CPABORT("RPA-OEP cannot be combined with post-SCF WF_CORRELATION")
+         CALL section_vals_val_get(input, "DFT%XC%XC_FUNCTIONAL%_SECTION_PARAMETERS_", i_val=functional)
+         IF (functional /= xc_none) CPABORT("RPA-OEP requires XC_FUNCTIONAL NONE")
+      END IF
    END SUBROUTINE oep_validate
 
 ! **************************************************************************************************
-!> \brief Replace only the nonlocal exchange matrix, preserving the HFX energy.
+!> \brief Replace nonlocal exchange by the local OEP matrix and optional RPA correlation.
 !> \param qs_env ...
 !> \param matrix_x pure nonlocal exchange on entry, local OEP matrix on exit
 !> \param hf_section ...
@@ -130,14 +145,14 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'oep_exchange_matrix'
 
-      CHARACTER(LEN=default_path_length)                 :: debug_file, potential_file
-      INTEGER                                            :: handle, i, nao, nmo, nocc, unit_dump, &
-                                                            unit_nr
-      LOGICAL                                            :: enabled, homo_condition
-      REAL(KIND=dp)                                      :: charge_error, residual, threshold
-      REAL(KIND=dp), ALLOCATABLE                         :: c(:, :), coefficients(:), k(:, :), &
-                                                            positions(:, :), reference(:), &
-                                                            v(:, :), w(:, :)
+      CHARACTER(LEN=default_path_length)                 :: debug_file, potential_file, rpa_file
+      INTEGER                                            :: handle, i, nao, nmo, nocc, nw, &
+                                                            unit_dump, unit_nr
+      LOGICAL                                            :: do_rpa, enabled, homo_condition
+      REAL(KIND=dp)                                      :: charge_error, residual, residual_c, &
+                                                            threshold, threshold_ri, x0
+      REAL(KIND=dp), ALLOCATABLE :: c(:, :), cc(:), coefficients(:), k(:, :), positions(:, :), &
+         reference(:), rhs_c(:), v(:, :), vc(:, :), w(:, :), wc(:, :), wr(:, :)
       REAL(KIND=dp), DIMENSION(:), POINTER               :: eps, occ
       TYPE(cp_blacs_env_type), POINTER                   :: blacs
       TYPE(cp_fm_struct_type), POINTER                   :: layout
@@ -146,13 +161,17 @@ CONTAINS
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(mp_para_env_type), POINTER                    :: para
       TYPE(particle_type), DIMENSION(:), POINTER         :: particles
+      TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
-      TYPE(section_vals_type), POINTER                   :: section
+      TYPE(section_vals_type), POINTER                   :: rpa_section, section
 
       section => section_vals_get_subs_vals(hf_section, "OEP")
       CALL section_vals_get(section, explicit=enabled)
       IF (.NOT. enabled) RETURN
-      CALL get_qs_env(qs_env, ks_env=ks_env, mos=mos, particle_set=particles, blacs_env=blacs, para_env=para)
+      CALL get_qs_env(qs_env, ks_env=ks_env, mos=mos, particle_set=particles, blacs_env=blacs, para_env=para, energy=energy)
+      energy%oep_rpa = 0.0_dp
+      rpa_section => section_vals_get_subs_vals(section, "RPA")
+      CALL section_vals_val_get(rpa_section, "_SECTION_PARAMETERS_", l_val=do_rpa)
       CALL get_mo_set(mos(1), nao=nao, nmo=nmo, homo=nocc, mo_coeff=mo_coeff, &
                       eigenvalues=eps, occupation_numbers=occ)
       unit_nr = -1
@@ -179,10 +198,23 @@ CONTAINS
       IF (.NOT. ALLOCATED(ks_env%oep)) THEN
          ALLOCATE (ks_env%oep)
          ks_env%oep%positions = positions
-         CALL oep_integrals(qs_env, ks_env%oep, nao)
+         CALL oep_integrals(qs_env, ks_env%oep, nao, "OEP")
          CALL oep_metric_preprocess(ks_env%oep)
          IF (unit_nr > 0) WRITE (unit_nr, '(T2,A,I0)') &
             "OEP| Auxiliary charge functions: ", SIZE(ks_env%oep%charge)
+      END IF
+      IF (do_rpa) THEN
+         IF (ALLOCATED(ks_env%oep_ri)) THEN
+            IF (ANY(ABS(positions - ks_env%oep_ri%positions) > 1.0E-14_dp)) DEALLOCATE (ks_env%oep_ri)
+         END IF
+         IF (.NOT. ALLOCATED(ks_env%oep_ri)) THEN
+            ALLOCATE (ks_env%oep_ri)
+            ks_env%oep_ri%positions = positions
+            CALL oep_integrals(qs_env, ks_env%oep_ri, nao, "RI_AUX")
+            CALL oep_metric_preprocess(ks_env%oep_ri)
+            IF (unit_nr > 0) WRITE (unit_nr, '(T2,A,I0)') &
+               "RPA-OEP| RI auxiliary functions: ", SIZE(ks_env%oep_ri%charge)
+         END IF
       END IF
       ALLOCATE (c(nao, nmo), k(nao, nao), v(nao, nao))
       CALL cp_fm_get_submatrix(mo_coeff, c)
@@ -196,7 +228,22 @@ CONTAINS
       CALL section_vals_val_get(section, "HOMO_CONDITION", l_val=homo_condition)
       CALL oep_solve(ks_env%oep, c, eps, nocc, k, threshold, homo_condition, &
                      v, coefficients, reference, w, residual, charge_error)
-      CALL cp_fm_set_submatrix(work, v)
+      IF (do_rpa) THEN
+         CALL section_vals_val_get(rpa_section, "THR_FAI_RI", r_val=threshold_ri)
+         CALL section_vals_val_get(rpa_section, "QUADRATURE_POINTS", i_val=nw)
+         CALL section_vals_val_get(rpa_section, "FREQUENCY_SCALE", r_val=x0)
+         CALL oep_rpa_solve(ks_env%oep, ks_env%oep_ri, c, eps, nocc, threshold, threshold_ri, nw, x0, &
+                            energy%oep_rpa, vc, cc, wc, wr, rhs_c, residual_c)
+         CALL cp_fm_set_submatrix(work, v + vc)
+         IF (unit_nr > 0) THEN
+            WRITE (unit_nr, '(T2,A,2I8)') "RPA-OEP| Retained potential / response functions: ", SIZE(wc, 2), SIZE(wr, 2)
+            WRITE (unit_nr, '(T2,A,F22.14)') "RPA-OEP| Correlation energy: ", energy%oep_rpa
+            WRITE (unit_nr, '(T2,A,ES12.4)') "RPA-OEP| Linear solve residual: ", residual_c
+            WRITE (unit_nr, '(T2,A,ES12.4)') "RPA-OEP| Correlation charge: ", DOT_PRODUCT(ks_env%oep%charge, cc)
+         END IF
+      ELSE
+         CALL cp_fm_set_submatrix(work, v)
+      END IF
       CALL copy_fm_to_dbcsr(work, matrix_x(1, 1)%matrix)
       CALL cp_fm_release(work)
       IF (unit_nr > 0) THEN
@@ -207,10 +254,26 @@ CONTAINS
       IF (para%is_source()) THEN
          CALL section_vals_val_get(section, "POTENTIAL_FILE_NAME", c_val=potential_file)
          CALL section_vals_val_get(section, "DEBUG_FILE_NAME", c_val=debug_file)
+         CALL section_vals_val_get(rpa_section, "DEBUG_FILE_NAME", c_val=rpa_file)
+         IF (do_rpa .AND. LEN_TRIM(rpa_file) > 0) THEN
+            IF (rpa_file == debug_file .OR. rpa_file == potential_file) &
+               CPABORT("OEP potential, exchange dump and RPA dump filenames must be different")
+            OPEN (NEWUNIT=unit_dump, FILE=TRIM(rpa_file), ACCESS="STREAM", FORM="UNFORMATTED", STATUS="REPLACE")
+            WRITE (unit_dump) 1, nao, SIZE(cc), SIZE(wr, 1), nmo, nocc, SIZE(wc, 2), SIZE(wr, 2), nw
+            WRITE (unit_dump) x0, threshold, threshold_ri, energy%oep_rpa
+            WRITE (unit_dump) ks_env%oep_ri%three_center, ks_env%oep_ri%metric, ks_env%oep_ri%charge, &
+               wc, wr, rhs_c, cc, vc
+            CLOSE (unit_dump)
+         END IF
          IF (LEN_TRIM(potential_file) > 0) THEN
             IF (potential_file == debug_file) CPABORT("OEP potential and debug filenames must be different")
-            CALL oep_write_potential(qs_env, TRIM(potential_file), coefficients, reference, &
-                                     threshold, homo_condition, SIZE(w, 2))
+            IF (do_rpa) THEN
+               CALL oep_write_potential(qs_env, TRIM(potential_file), coefficients, reference, &
+                                        threshold, homo_condition, SIZE(w, 2), cc)
+            ELSE
+               CALL oep_write_potential(qs_env, TRIM(potential_file), coefficients, reference, &
+                                        threshold, homo_condition, SIZE(w, 2))
+            END IF
          END IF
          IF (LEN_TRIM(debug_file) > 0) THEN
             OPEN (NEWUNIT=unit_dump, FILE=TRIM(debug_file), ACCESS="STREAM", FORM="UNFORMATTED", STATUS="REPLACE")
@@ -234,20 +297,23 @@ CONTAINS
 !> \param threshold ...
 !> \param homo_condition ...
 !> \param nret ...
+!> \param correlation optional correlation source coefficients
 ! **************************************************************************************************
-   SUBROUTINE oep_write_potential(qs_env, filename, coefficients, reference, threshold, homo_condition, nret)
+   SUBROUTINE oep_write_potential(qs_env, filename, coefficients, reference, threshold, homo_condition, nret, correlation)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       CHARACTER(LEN=*), INTENT(IN)                       :: filename
       REAL(KIND=dp), INTENT(IN)                          :: coefficients(:), reference(:), threshold
       LOGICAL, INTENT(IN)                                :: homo_condition
       INTEGER, INTENT(IN)                                :: nret
+      REAL(dp), INTENT(IN), OPTIONAL                     :: correlation(:)
 
       CHARACTER(LEN=2)                                   :: element
       INTEGER                                            :: first, ia, ico, ip, iset, j, ka, nc, &
                                                             ncart, ns, offset, unit_nr, z
       INTEGER, ALLOCATABLE                               :: off_aux(:)
       LOGICAL                                            :: first_term
-      REAL(KIND=dp), ALLOCATABLE                         :: cart_reference(:), cart_total(:)
+      REAL(KIND=dp), ALLOCATABLE                         :: cart_c(:), cart_reference(:), &
+                                                            cart_total(:)
       TYPE(gto_basis_set_p_type), ALLOCATABLE            :: aux(:)
       TYPE(gto_basis_set_type), POINTER                  :: basis
       TYPE(particle_type), DIMENSION(:), POINTER         :: particles
@@ -263,11 +329,16 @@ CONTAINS
       CALL open_file(filename, unit_nr, file_status="REPLACE", file_action="WRITE")
       WRITE (unit_nr, '(A)') '{', &
          '  "format": "CP2K_OEP_POTENTIAL",', &
-         '  "version": 1,', &
          '  "length_unit": "bohr",', &
          '  "potential_unit": "hartree",', &
-         '  "representation": "unnormalized_cartesian_gaussians",', &
-         '  "term_columns": ["lx", "ly", "lz", "exponent", "total", "reference"],'
+         '  "representation": "unnormalized_cartesian_gaussians",'
+      IF (PRESENT(correlation)) THEN
+         WRITE (unit_nr, '(A)') '  "version": 2,', &
+            '  "term_columns": ["lx", "ly", "lz", "exponent", "total", "reference", "exchange", "correlation"],'
+      ELSE
+         WRITE (unit_nr, '(A)') '  "version": 1,', &
+            '  "term_columns": ["lx", "ly", "lz", "exponent", "total", "reference"],'
+      END IF
       IF (homo_condition) THEN
          WRITE (unit_nr, '(A)') '  "homo_condition": true,'
       ELSE
@@ -276,7 +347,14 @@ CONTAINS
       WRITE (unit_nr, '(A,ES26.17E3,A)') '  "threshold": ', threshold, ','
       WRITE (unit_nr, '(A,I0,A)') '  "naux": ', SIZE(coefficients), ','
       WRITE (unit_nr, '(A,I0,A)') '  "nretained": ', nret, ','
-      WRITE (unit_nr, '(A,ES26.17E3,A)') '  "total_charge": ', DOT_PRODUCT(ks_env%oep%charge, coefficients), ','
+      IF (PRESENT(correlation)) THEN
+         WRITE (unit_nr, '(A,ES26.17E3,A)') '  "total_charge": ', &
+            DOT_PRODUCT(ks_env%oep%charge, coefficients + correlation), ','
+         WRITE (unit_nr, '(A,ES26.17E3,A)') '  "exchange_charge": ', DOT_PRODUCT(ks_env%oep%charge, coefficients), ','
+         WRITE (unit_nr, '(A,ES26.17E3,A)') '  "correlation_charge": ', DOT_PRODUCT(ks_env%oep%charge, correlation), ','
+      ELSE
+         WRITE (unit_nr, '(A,ES26.17E3,A)') '  "total_charge": ', DOT_PRODUCT(ks_env%oep%charge, coefficients), ','
+      END IF
       WRITE (unit_nr, '(A,ES26.17E3,A)') '  "reference_charge": ', DOT_PRODUCT(ks_env%oep%charge, reference), ','
       WRITE (unit_nr, '(A)') '  "atoms": ['
       DO ia = 1, SIZE(particles)
@@ -297,14 +375,26 @@ CONTAINS
             offset = off_aux(ia) + first - 1
             cart_total = MATMUL(basis%sphi(:ncart, first:first + ns - 1), coefficients(offset:offset + ns - 1))
             cart_reference = MATMUL(basis%sphi(:ncart, first:first + ns - 1), reference(offset:offset + ns - 1))
+            IF (PRESENT(correlation)) THEN
+               cart_c = MATMUL(basis%sphi(:ncart, first:first + ns - 1), correlation(offset:offset + ns - 1))
+            ELSE
+               cart_c = 0.0_dp*cart_total
+            END IF
             DO ip = 1, basis%npgf(iset)
                DO ico = 1, nc
                   j = (ip - 1)*nc + ico
-                  IF (cart_total(j) == 0.0_dp .AND. cart_reference(j) == 0.0_dp) CYCLE
+                  IF (cart_total(j) == 0.0_dp .AND. cart_reference(j) == 0.0_dp .AND. cart_c(j) == 0.0_dp) CYCLE
                   IF (.NOT. first_term) WRITE (unit_nr, '(A)') ','
-                  WRITE (unit_nr, '(A,3(I0,A),2(ES26.17E3,A),ES26.17E3,A)', ADVANCE="NO") &
-                     '        [', indco(1, ico), ',', indco(2, ico), ',', indco(3, ico), ',', &
-                     basis%zet(ip, iset), ',', cart_total(j), ',', cart_reference(j), ']'
+                  IF (PRESENT(correlation)) THEN
+                     WRITE (unit_nr, '(A,3(I0,A),4(ES26.17E3,A),ES26.17E3,A)', ADVANCE="NO") &
+                        '        [', indco(1, ico), ',', indco(2, ico), ',', indco(3, ico), ',', &
+                        basis%zet(ip, iset), ',', cart_total(j) + cart_c(j), ',', cart_reference(j), ',', &
+                        cart_total(j), ',', cart_c(j), ']'
+                  ELSE
+                     WRITE (unit_nr, '(A,3(I0,A),2(ES26.17E3,A),ES26.17E3,A)', ADVANCE="NO") &
+                        '        [', indco(1, ico), ',', indco(2, ico), ',', indco(3, ico), ',', &
+                        basis%zet(ip, iset), ',', cart_total(j), ',', cart_reference(j), ']'
+                  END IF
                   first_term = .FALSE.
                END DO
             END DO
@@ -326,11 +416,13 @@ CONTAINS
 !> \param qs_env ...
 !> \param oep ...
 !> \param nao ...
+!> \param basis_type auxiliary basis purpose
 ! **************************************************************************************************
-   SUBROUTINE oep_integrals(qs_env, oep, nao)
+   SUBROUTINE oep_integrals(qs_env, oep, nao, basis_type)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(qs_oep_type), INTENT(INOUT)                   :: oep
       INTEGER, INTENT(IN)                                :: nao
+      CHARACTER(LEN=*), INTENT(IN)                       :: basis_type
 
       INTEGER                                            :: fa, fb, fc, ga, gb, gc, ia, ib, ic, ka, &
                                                             kb, ma, max_l, mb, mc, na, natom, &
@@ -353,8 +445,10 @@ CONTAINS
       max_l = 0
       DO ka = 1, nkind
          CALL get_qs_kind(kinds_set(ka), basis_set=ao(ka)%gto_basis_set, basis_type="ORB")
-         CALL get_qs_kind(kinds_set(ka), basis_set=aux(ka)%gto_basis_set, basis_type="OEP")
-         IF (.NOT. ASSOCIATED(aux(ka)%gto_basis_set)) CPABORT("EXX-OEP requires BASIS_SET OEP on every KIND")
+         CALL get_qs_kind(kinds_set(ka), basis_set=aux(ka)%gto_basis_set, basis_type=basis_type)
+         IF (.NOT. ASSOCIATED(aux(ka)%gto_basis_set)) THEN
+            CPABORT("OEP requires BASIS_SET "//basis_type//" on every KIND")
+         END IF
          CALL init_interaction_radii_orb_basis(aux(ka)%gto_basis_set, 1.0E-16_dp)
          max_l = MAX(max_l, MAXVAL(ao(ka)%gto_basis_set%lmax), MAXVAL(aux(ka)%gto_basis_set%lmax))
       END DO
