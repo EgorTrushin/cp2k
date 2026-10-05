@@ -9,6 +9,7 @@ gpw
 gapw
 electrostatics/index
 hartree-fock/index
+exx-oep
 basis_sets
 pseudopotentials
 k-points

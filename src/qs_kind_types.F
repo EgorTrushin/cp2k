@@ -3439,6 +3439,8 @@ CONTAINS
                   bstring = "Minimal Basis Set"
                CASE ("RI_AUX")
                   bstring = "RI Auxiliary Basis Set"
+               CASE ("OEP")
+                  bstring = "OEP Auxiliary Charge Basis Set"
                CASE ("AUX_FIT")
                   bstring = "Auxiliary Fit Basis Set"
                CASE ("LRI_AUX")
@@ -3673,6 +3675,8 @@ CONTAINS
                      bstring = "Minimal Basis Set"
                   CASE ("RI_AUX")
                      bstring = "RI Auxiliary Basis Set"
+                  CASE ("OEP")
+                     bstring = "OEP Auxiliary Charge Basis Set"
                   CASE ("AUX_FIT")
                      bstring = "Auxiliary Fit Basis Set"
                   CASE ("LRI_AUX")
