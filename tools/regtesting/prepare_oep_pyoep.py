@@ -20,10 +20,18 @@ parser.add_argument("--output", required=True, type=Path)
 parser.add_argument(
     "--cases", nargs="+", choices=["h2", "co", "h2o"], default=["h2", "co", "h2o"]
 )
+parser.add_argument(
+    "--rpa", action="store_true", help="Also generate self-consistent RPA tests"
+)
+parser.add_argument("--ri-basis", default="aug-cc-pVQZ-RIFIT")
+parser.add_argument(
+    "--cell-size", type=float, default=18.0, help="CP2K cubic cell side in angstrom"
+)
 args = parser.parse_args()
 sys.path.insert(0, str(args.pyoep.resolve()))
 from pyscf import gto, scf
 from methods.exxoep import EXXOEP
+from methods.rpaoep import RPAOEP
 
 root = args.output.resolve()
 root.mkdir(parents=True, exist_ok=True)
@@ -42,7 +50,10 @@ for name in args.cases:
     elements = sorted(set(mol.atom_symbol(i) for i in range(mol.natm)))
     basis = []
     for el in elements:
-        for tag, source in [("ORB", orbital), ("OEP", aux)]:
+        sources = [("ORB", orbital), ("OEP", aux)]
+        if args.rpa:
+            sources.append(("RI", args.ri_basis))
+        for tag, source in sources:
             shells = gto.basis.load(source, el)
             basis += [f"{el} {tag}-PYOEP", str(len(shells))]
             for shell in shells:
@@ -57,6 +68,7 @@ for name in args.cases:
         f"""    &KIND {el}
       BASIS_SET ORB ORB-PYOEP
       BASIS_SET OEP OEP-PYOEP
+      {"BASIS_SET RI_AUX RI-PYOEP" if args.rpa else ""}
       POTENTIAL ALL
       RADIAL_GRID 200
       LEBEDEV_GRID 590
@@ -133,7 +145,7 @@ for name in args.cases:
   &END DFT
   &SUBSYS
     &CELL
-      ABC 18 18 18
+      ABC {args.cell_size} {args.cell_size} {args.cell_size}
       PERIODIC NONE
     &END CELL
     &COORD
@@ -182,6 +194,45 @@ for name in args.cases:
             "converged": oep.converged,
         }
     assert all(references[str(h)]["converged"] for h in [False, True])
+    if args.rpa:
+        references["ri_basis"] = args.ri_basis
+        references["rpa"] = {}
+        for homo in [False, True]:
+            tag = "rpa_homo" if homo else "rpa"
+            source = homo_inp if homo else inp
+            rpa_input = source.replace(f"PROJECT {name}", f"PROJECT {tag}")
+            rpa_input = rpa_input.replace(
+                "          THR_FAI_OEP",
+                """          &RPA
+            QUADRATURE_POINTS 20
+            FREQUENCY_SCALE 2.5
+            THR_FAI_RI 1e-8
+            DEBUG_FILE_NAME rpa.bin
+          &END RPA
+          THR_FAI_OEP""",
+            )
+            rpa_input = rpa_input.replace(
+                "DEBUG_FILE_NAME rpa.bin", f"DEBUG_FILE_NAME {tag}.bin"
+            )
+            rpa_input = rpa_input.replace(
+                "POTENTIAL_FILE_NAME oep.json", f"POTENTIAL_FILE_NAME {tag}.json"
+            )
+            rpa_input = rpa_input.replace(
+                "POTENTIAL_FILE_NAME oep_homo.json", f"POTENTIAL_FILE_NAME {tag}.json"
+            )
+            rpa_input = rpa_input.replace("hf-RESTART.wfn", f"{name}-RESTART.wfn")
+            (run / f"{tag}.inp").write_text(rpa_input)
+            start = EXXOEP(mf, aux, use_HOMO_condition=homo)
+            start.run(maxit=100, e_conv_thr=1e-12)
+            rpa = RPAOEP(start.mf, aux, args.ri_basis, use_HOMO_condition=homo)
+            rpa.run(maxit=100, e_conv_thr=1e-12)
+            assert rpa.converged
+            references["rpa"][str(homo)] = {
+                "energy": rpa.e_tot,
+                "correlation_energy": rpa.E_corr,
+                "eigenvalues": rpa.mf.mo_energy.tolist(),
+                "converged": rpa.converged,
+            }
     (run / "reference.json").write_text(json.dumps(references, indent=2))
     print(
         name,

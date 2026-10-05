@@ -287,3 +287,133 @@ of the complete molecular calculation.
 The HOMO-constrained variants also converge from the HF start and pass the same
 matrix comparisons: retained dimensions 8, 36, and 63 for H2, H2O, and CO,
 respectively, with maximum analytic-charge matrix differences below 3.4e-12 Ha.
+
+## Self-consistent RPA correlation
+
+Add `RPA` inside `HF / OEP` to include direct RPA correlation in both the SCF
+energy and the local potential. The section parameter is the input switch:
+`&RPA` or `&RPA TRUE` enables it; an absent section or `&RPA FALSE` leaves
+exchange-only OEP. The restricted molecular scope described above still applies.
+Use `XC_FUNCTIONAL NONE` and do not combine this with post-SCF
+`XC / WF_CORRELATION`; that would count correlation twice.
+
+```text
+&OEP
+  THR_FAI_OEP 0.05
+  HOMO_CONDITION FALSE
+  POTENTIAL_FILE_NAME vxc.oep.json
+  &RPA TRUE
+    THR_FAI_RI 1.0E-8
+    QUADRATURE_POINTS 20
+    FREQUENCY_SCALE 2.5
+  &END RPA
+&END OEP
+```
+
+Each atomic kind also needs `BASIS_SET RI_AUX my-response-basis`. This basis is
+independent of `BASIS_SET OEP`: the latter expands the local potential, while
+`RI_AUX` expands the Coulomb response. The validation examples use
+aug-cc-pVDZ-RIFIT for OEP and aug-cc-pVQZ-RIFIT for the response. Keep full
+four-center Hartree and exchange; no extra density-fitting basis is necessary.
+
+At every OEP update the implementation:
+
+1. Orthogonalizes each auxiliary basis in its normalized Coulomb metric and
+   projects out the total-charge direction, using analytic Gaussian charges.
+2. Filters the unweighted occupied-virtual coupling Gram matrix separately for
+   the potential (`THR_FAI_OEP`) and response (`THR_FAI_RI`). The correlation
+   potential always uses the charge-only potential space, even when exchange
+   uses `HOMO_CONDITION TRUE`.
+3. Integrates the direct RPA correlation energy and its local-potential
+   derivative, including both orbital and orbital-energy derivatives, over
+   imaginary frequency. The Gauss-Legendre map is
+   $\omega=x_0(1+t)/(1-t)$, with `FREQUENCY_SCALE` $x_0$ in hartree.
+4. Solves the correlation OEP equation, adds $v_c$ to $v_x$ in the KS matrix,
+   and adds $E_c^{\mathrm{RPA}}$ once to the SCF energy. The output labels this
+   contribution `RPA-OEP correlation energy`.
+
+The kernel follows `RPAOEP.get_scrpa_rhs` in PyOEP. The source charge of $v_c$
+is zero, so the exchange-correlation potential retains the exchange $-1/r$
+monopole tail. RPA is evaluated during SCF; this is distinct from CP2K's
+post-SCF `WF_CORRELATION / RI_RPA` driver.
+
+A converged EXX-OEP wavefunction is a useful initial guess: set
+`SCF_GUESS RESTART` and `WFN_RESTART_FILE_NAME` to that calculation's `.wfn` file.
+The first update recomputes the current eigensystem if restart orbital energies
+are unavailable. Converge the frequency quadrature as well as the orbital,
+auxiliary, and GAPW grids. Small correlation energy alone does not bound the
+size of its potential derivative; verify SCF convergence for each system.
+
+### Correlation potential export
+
+With RPA enabled, `POTENTIAL_FILE_NAME` writes **version 2**. Each primitive has
+columns `[lx, ly, lz, exponent, total, reference, exchange, correlation]`, where
+`total` is $v_{xc}$, `reference` is the exchange reference, and the last two
+columns separately describe $v_x$ and $v_c$. Their integrated charges are
+recorded individually. Without RPA the writer continues to produce version 1.
+
+The same postprocessor reads both versions. For version 2, `evaluate(points)`
+returns columns `total, reference, remainder, exchange, correlation`; the
+`components` attribute lists this order. Here `remainder` is
+$v_{xc}-v_{x,\mathrm{ref}}$. Line plots show $v_{xc}$, $v_x$, and $v_c$.
+For example:
+
+```shell
+python tools/oep/potential.py vxc.oep.json line \
+  --start 0 0 -8 --end 0 0 8 --output vxc.csv --plot vxc.pdf
+python tools/oep/potential.py vxc.oep.json cube \
+  --component correlation --spacing 0.2 --margin 5 --output vc.cube
+```
+
+### Independent RPA validation
+
+```shell
+python tools/regtesting/prepare_oep_pyoep.py \
+  --pyoep /path/to/PyOEP --output /path/to/rpa-tests --rpa --cases h2 h2o
+```
+
+Run `hf.inp`, `oep.inp`, then `rpa.inp` in each generated directory. This writes
+`rpa.bin` (correlation diagnostic), `oep.bin` (exchange diagnostic and current
+orbitals), and `rpa.json` (portable potential). Both diagnostic files are replaced
+at each update and must come from the same run. Then check:
+
+```shell
+python tools/regtesting/compare_rpa_pyoep.py /path/to/rpa-tests/h2o \
+  --pyoep /path/to/PyOEP
+```
+
+Run `oep_homo.inp`, then `rpa_homo.inp` and pass `--homo` to test the exchange
+HOMO condition. The comparison checks independent RI integrals and charges,
+retained-space orthonormality, PyOEP's energy and derivative at identical
+orbitals, the correlation AO matrix with independently rebuilt preprocessing,
+and exported potentials. A separate central finite difference perturbs the
+local Hamiltonian, rediagonalizes it, and differentiates the RPA energy in the
+fixed response space; this checks the sign, factors, and orbital-energy term.
+Total molecular energies and occupied eigenvalues are also compared with fully
+converged PyOEP calculations, separately from these kernel checks.
+
+The initial scRPA validation used cc-pVTZ orbitals, aug-cc-pVDZ-RIFIT OEP and
+aug-cc-pVQZ-RIFIT response bases, the grids listed above, an 8-Angstrom cell,
+and 20 frequency points. From converged EXX-OEP orbitals:
+
+| Molecule | scRPA iterations | Total energy (Ha) | RPA correlation energy (Ha) |
+| --- | ---: | ---: | ---: |
+| H2 | 6 | -1.20801462055 | -0.07559024301 |
+| H2O | 10 | -76.46777280283 | -0.41825068220 |
+
+Both exchange HOMO-constrained variants also converged in 6 and 10 iterations,
+respectively. Across these calculations and 40-point reruns, the correlation
+energy and AO potential at fixed orbitals agree with the independently
+preprocessed PyOEP calculation within 4e-13 Ha. Directional finite-difference
+errors are below 3e-11. The native RI integrals and metric agree with PySCF to
+within 3e-12, and the potential export agrees with independent grid integrals
+to within 1e-12 Ha. Increasing the quadrature from 20 to 40 points changes the
+converged total energy by 1.2e-11 Ha for H2 and 5.6e-9 Ha for water. These
+quadrature results apply to these examples, not arbitrary molecules or bases.
+The finite GAPW total energies differ from converged PyOEP by approximately
+9e-7 Ha and -1.3e-6 Ha, respectively.
+
+`QS/regtest-oep` now includes three scRPA energy checks in addition to the four
+existing HF/EXX-OEP checks; all seven pass with two OpenMP threads. Six portable
+potential tests pass. Invalid quadrature settings, a missing RI basis, and
+semilocal XC combined with scRPA are rejected with explicit diagnostics.

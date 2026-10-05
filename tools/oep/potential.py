@@ -75,38 +75,46 @@ def gaussian_potentials(displacement, exponent, powers):
 
 
 class OEPPotential:
-    """Portable Gaussian expansion; evaluate() returns total, reference, remainder."""
+    """Gaussian expansion; evaluate() columns are listed in components (total=vx/vxc)."""
 
     def __init__(self, filename):
         self.metadata = json.loads(Path(filename).read_text())
         data = self.metadata
-        if data.get("format") != "CP2K_OEP_POTENTIAL" or data.get("version") != 1:
+        if data.get("format") != "CP2K_OEP_POTENTIAL" or data.get("version") not in (
+            1,
+            2,
+        ):
             raise ValueError("Unsupported CP2K OEP potential format or version")
         if data.get("length_unit") != "bohr" or data.get("potential_unit") != "hartree":
             raise ValueError("Expected bohr/hartree units")
         if data.get("representation") != "unnormalized_cartesian_gaussians":
             raise ValueError("Unsupported Gaussian representation")
+        self.stored_components = ["total", "reference"]
+        self.components = ["total", "reference", "remainder"]
+        if data["version"] == 2:
+            self.stored_components += ["exchange", "correlation"]
+            self.components += ["exchange", "correlation"]
+        count = len(self.stored_components)
         if data.get("term_columns") != [
             "lx",
             "ly",
             "lz",
             "exponent",
-            "total",
-            "reference",
+            *self.stored_components,
         ]:
             raise ValueError("Unexpected Gaussian term columns")
         self.atoms = data["atoms"]
         if not self.atoms:
             raise ValueError("The potential has no centers")
         self.groups = []
-        charges = [[], []]
+        charges = [[] for _ in range(count)]
         for atom in self.atoms:
             center = np.array(atom["position"], dtype=float)
             if center.shape != (3,) or not np.all(np.isfinite(center)):
                 raise ValueError("Invalid atomic coordinates")
             groups = {}
             for term in atom["terms"]:
-                if len(term) != 6 or not np.all(np.isfinite(term)):
+                if len(term) != 4 + count or not np.all(np.isfinite(term)):
                     raise ValueError("Invalid Gaussian term")
                 powers = tuple(int(p) for p in term[:3])
                 if any(p < 0 or p != raw for p, raw in zip(powers, term[:3])):
@@ -116,7 +124,7 @@ class OEPPotential:
                     raise ValueError("Gaussian exponents must be positive")
                 weights = np.array(term[4:], dtype=float)
                 group = groups.setdefault(exponent, {})
-                group[powers] = group.get(powers, np.zeros(2)) + weights
+                group[powers] = group.get(powers, np.zeros(count)) + weights
             for exponent, terms in groups.items():
                 powers = list(terms)
                 weights = np.array(list(terms.values()))
@@ -130,10 +138,10 @@ class OEPPotential:
                             for p in triple
                         )
                     )
-                    for component in range(2):
+                    for component in range(count):
                         charges[component].append(moment * pair[component])
         self.charges = np.array([math.fsum(values) for values in charges])
-        expected = np.array([data["total_charge"], data["reference_charge"]])
+        expected = np.array([data[f"{name}_charge"] for name in self.stored_components])
         if not np.all(np.isfinite(expected)) or not np.allclose(
             self.charges, expected, rtol=1e-9, atol=1e-8
         ):
@@ -147,29 +155,28 @@ class OEPPotential:
             raise ValueError("Expected finite coordinates with shape (npoints, 3)")
         if batch_size < 1:
             raise ValueError("batch_size must be positive")
-        result = np.zeros((len(points), 3))
+        result = np.zeros((len(points), len(self.stored_components)))
         for start in range(0, len(points), batch_size):
             stop = min(start + batch_size, len(points))
             for center, exponent, powers, weights in self.groups:
                 integrals = gaussian_potentials(
                     center - points[start:stop], exponent, powers
                 )
-                result[start:stop, :2] += integrals @ weights
-        result[:, 2] = result[:, 0] - result[:, 1]
-        return result
+                result[start:stop] += integrals @ weights
+        return np.insert(result, 2, result[:, 0] - result[:, 1], axis=1)
 
     def write_cube(self, filename, spacing=0.2, margin=5.0, component="total"):
         """Write a molecular cube in bounded batches, including its atomic centers."""
         if spacing <= 0 or margin <= 0:
             raise ValueError("Cube spacing and margin must be positive")
-        column = ["total", "reference", "remainder"].index(component)
+        column = self.components.index(component)
         positions = np.array([atom["position"] for atom in self.atoms])
         origin = positions.min(axis=0) - margin
         extent = positions.max(axis=0) - positions.min(axis=0) + 2 * margin
         shape = np.ceil(extent / spacing).astype(int) + 1
         steps = extent / (shape - 1)
         with Path(filename).open("w") as stream:
-            stream.write(f"CP2K EXX-OEP {component} exchange potential\n")
+            stream.write(f"CP2K OEP {component} potential\n")
             stream.write("Coordinates in bohr; potential in hartree\n")
             stream.write(
                 f"{len(self.atoms):5d}" + "".join(f" {v:.16e}" for v in origin) + "\n"
@@ -202,7 +209,7 @@ def main():
     parser.add_argument("potential", type=Path)
     commands = parser.add_subparsers(dest="command", required=True)
     line = commands.add_parser(
-        "line", help="Sample a line and optionally plot all three components"
+        "line", help="Sample a line and optionally plot the potential components"
     )
     line.add_argument(
         "--start", type=float, nargs=3, required=True, metavar=("X", "Y", "Z")
@@ -229,7 +236,9 @@ def main():
         "--margin", type=float, default=5, help="Margin around atoms in bohr"
     )
     cube.add_argument(
-        "--component", choices=["total", "reference", "remainder"], default="total"
+        "--component",
+        choices=["total", "reference", "remainder", "exchange", "correlation"],
+        default="total",
     )
     args = parser.parse_args()
     potential = OEPPotential(args.potential)
@@ -246,11 +255,13 @@ def main():
     else:
         coordinates = np.loadtxt(args.coordinates, ndmin=2)
     values = potential.evaluate(coordinates)
+    prefix = "vx" if potential.metadata["version"] == 1 else "v"
     np.savetxt(
         args.output,
         np.column_stack((coordinates, values)),
         delimiter=",",
-        header="x_bohr,y_bohr,z_bohr,vx_total_hartree,vx_reference_hartree,vx_remainder_hartree",
+        header="x_bohr,y_bohr,z_bohr,"
+        + ",".join(f"{prefix}_{name}_hartree" for name in potential.components),
         comments="",
         fmt="%.16e",
     )
@@ -271,18 +282,27 @@ def main():
             else "Distance along line (bohr)"
         )
         fig, ax = plt.subplots(figsize=(8, 4.8), layout="constrained")
-        for column, label, color, style in [
+        curves = [
             (0, "Total", "#126e82", "-"),
             (1, "Reference", "#c86420", "--"),
             (2, "Remainder", "#7570b3", ":"),
-        ]:
+        ]
+        if potential.metadata["version"] == 2:
+            curves = [
+                (0, r"$v_{xc}$", "#126e82", "-"),
+                (3, r"$v_x$", "#c86420", "--"),
+                (4, r"$v_c$", "#7570b3", ":"),
+            ]
+        for column, label, color, style in curves:
             ax.plot(
                 abscissa, values[:, column], label=label, color=color, linestyle=style
             )
         ax.set(
             xlabel=xlabel,
-            ylabel=r"Exchange potential $v_x$ (hartree)",
-            title="CP2K EXX-OEP",
+            ylabel="Potential (hartree)",
+            title="CP2K scRPA-OEP"
+            if potential.metadata["version"] == 2
+            else "CP2K EXX-OEP",
         )
         ax.legend(frameon=False)
         ax.grid(alpha=0.15)
