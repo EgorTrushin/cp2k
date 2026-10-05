@@ -1100,7 +1100,7 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="BASIS_SET", &
                           description="Selects a Gaussian basis set for this kind. The default type is ORB and the default "// &
                           "form is GTO; NONE implies no basis and is meaningful for ghost atoms. Possible values for TYPE are "// &
-                          "{ORB, AUX, MIN, RI_AUX, LRI, ...}. Possible values for "// &
+                          "{ORB, AUX, MIN, RI_AUX, OEP, LRI, ...}. Possible values for "// &
                           "FORM are {GTO, STO}. Where STO results in a GTO expansion of a Slater type basis. "// &
                           "If a value for FORM is given, also TYPE has to be set explicitly.", &
                           usage="BASIS_SET [type] [form] DZVP", type_of_var=char_t, default_c_vals=[" ", " ", " "], &

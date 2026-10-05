@@ -48,6 +48,7 @@ Fist/regtest-excl-G
 Fist/regtest-excl-R
 QS/regtest-hfx                                              libint !ifx
 QS/regtest-debug-6                                          libint !ifx
+QS/regtest-oep                                              libint !ifx
 QS/regtest-kg                                               libxc
 QS/regtest-gpw-8
 Fist/regtest-12

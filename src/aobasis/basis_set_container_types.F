@@ -49,7 +49,8 @@ MODULE basis_set_container_types
                                                rhoin_basis = 120, &
                                                nuclear_basis = 121, &
                                                nuclear_soft_basis = 122, &
-                                               harris_soft_basis = 123
+                                               harris_soft_basis = 123, &
+                                               oep_basis = 124
 ! **************************************************************************************************
    TYPE basis_set_container_type
       PRIVATE
@@ -101,6 +102,8 @@ CONTAINS
       SELECT CASE (basis_set_type)
       CASE ("ORB")
          basis_type_nr = orbital_basis
+      CASE ("OEP")
+         basis_type_nr = oep_basis
       CASE ("AUX")
          basis_type_nr = auxiliary_basis
       CASE ("MIN")

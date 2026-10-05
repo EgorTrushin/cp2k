@@ -30,6 +30,7 @@ MODULE qs_ks_types
    USE distribution_2d_types,           ONLY: distribution_2d_release,&
                                               distribution_2d_retain,&
                                               distribution_2d_type
+   USE kinds,                           ONLY: dp
    USE kpoint_transitional,             ONLY: get_1d_pointer,&
                                               get_2d_pointer,&
                                               kpoint_transitional_release,&
@@ -72,6 +73,12 @@ MODULE qs_ks_types
 
    PUBLIC :: qs_ks_env_type, qs_ks_env_create, qs_ks_did_change
    PUBLIC :: qs_ks_release, qs_ks_part_release, get_ks_env, set_ks_env
+
+   ! Dense, replicated state for molecular exact-exchange OEP.
+   TYPE, PUBLIC :: qs_oep_type
+      REAL(KIND=dp), ALLOCATABLE :: three_center(:, :, :), metric(:, :), &
+                                    w2(:, :), charge(:), y2(:), positions(:, :)
+   END TYPE qs_oep_type
 
 ! **************************************************************************************************
 !> \brief calculation environment to calculate the ks matrix,
@@ -136,6 +143,7 @@ MODULE qs_ks_types
 ! **************************************************************************************************
    TYPE qs_ks_env_type
       PRIVATE
+      TYPE(qs_oep_type), ALLOCATABLE, PUBLIC :: oep
       LOGICAL                                               :: s_mstruct_changed = .TRUE., &
                                                                rho_changed = .TRUE., &
                                                                potential_changed = .TRUE., &
@@ -754,6 +762,7 @@ CONTAINS
    SUBROUTINE qs_ks_release(ks_env)
       TYPE(qs_ks_env_type), INTENT(INOUT)                :: ks_env
 
+      IF (ALLOCATED(ks_env%oep)) DEALLOCATE (ks_env%oep)
       IF (ASSOCIATED(ks_env%v_hartree_rspace)) THEN
          CALL ks_env%v_hartree_rspace%release()
          DEALLOCATE (ks_env%v_hartree_rspace)
@@ -870,6 +879,7 @@ CONTAINS
    SUBROUTINE qs_ks_part_release(ks_env)
       TYPE(qs_ks_env_type), INTENT(INOUT)                :: ks_env
 
+      IF (ALLOCATED(ks_env%oep)) DEALLOCATE (ks_env%oep)
       IF (ASSOCIATED(ks_env%v_hartree_rspace)) THEN
          CALL ks_env%v_hartree_rspace%release()
          DEALLOCATE (ks_env%v_hartree_rspace)
