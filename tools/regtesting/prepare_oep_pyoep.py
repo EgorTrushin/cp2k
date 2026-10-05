@@ -126,6 +126,7 @@ for name in args.cases:
         &OEP
           THR_FAI_OEP 0.05
           DEBUG_FILE_NAME oep.bin
+          POTENTIAL_FILE_NAME oep.json
         &END OEP
       &END HF
     &END XC
@@ -160,6 +161,9 @@ for name in args.cases:
     )
     homo_inp = homo_inp.replace(
         "DEBUG_FILE_NAME oep.bin", "DEBUG_FILE_NAME oep_homo.bin"
+    )
+    homo_inp = homo_inp.replace(
+        "POTENTIAL_FILE_NAME oep.json", "POTENTIAL_FILE_NAME oep_homo.json"
     )
     (run / "oep_homo.inp").write_text(homo_inp)
     mf = scf.RHF(mol).run(conv_tol=1e-12)

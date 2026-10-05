@@ -1,2 +1,3 @@
 @SET HOMO_CONDITION FALSE
+@SET OEP_FILE h2o-oep.json
 @INCLUDE H2O-oep.inc

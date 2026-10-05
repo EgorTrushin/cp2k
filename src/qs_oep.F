@@ -30,6 +30,8 @@ MODULE qs_oep
    USE cp_dbcsr_api,                    ONLY: dbcsr_p_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr
+   USE cp_files,                        ONLY: close_file,&
+                                              open_file
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
@@ -128,13 +130,14 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'oep_exchange_matrix'
 
-      CHARACTER(LEN=default_path_length)                 :: debug_file
+      CHARACTER(LEN=default_path_length)                 :: debug_file, potential_file
       INTEGER                                            :: handle, i, nao, nmo, nocc, unit_dump, &
                                                             unit_nr
       LOGICAL                                            :: enabled, homo_condition
       REAL(KIND=dp)                                      :: charge_error, residual, threshold
       REAL(KIND=dp), ALLOCATABLE                         :: c(:, :), coefficients(:), k(:, :), &
-                                                            positions(:, :), v(:, :), w(:, :)
+                                                            positions(:, :), reference(:), &
+                                                            v(:, :), w(:, :)
       REAL(KIND=dp), DIMENSION(:), POINTER               :: eps, occ
       TYPE(cp_blacs_env_type), POINTER                   :: blacs
       TYPE(cp_fm_struct_type), POINTER                   :: layout
@@ -192,7 +195,7 @@ CONTAINS
       CALL section_vals_val_get(section, "THR_FAI_OEP", r_val=threshold)
       CALL section_vals_val_get(section, "HOMO_CONDITION", l_val=homo_condition)
       CALL oep_solve(ks_env%oep, c, eps, nocc, k, threshold, homo_condition, &
-                     v, coefficients, w, residual, charge_error)
+                     v, coefficients, reference, w, residual, charge_error)
       CALL cp_fm_set_submatrix(work, v)
       CALL copy_fm_to_dbcsr(work, matrix_x(1, 1)%matrix)
       CALL cp_fm_release(work)
@@ -202,7 +205,13 @@ CONTAINS
          WRITE (unit_nr, '(T2,A,ES12.4)') "OEP| Charge constraint error: ", charge_error
       END IF
       IF (para%is_source()) THEN
+         CALL section_vals_val_get(section, "POTENTIAL_FILE_NAME", c_val=potential_file)
          CALL section_vals_val_get(section, "DEBUG_FILE_NAME", c_val=debug_file)
+         IF (LEN_TRIM(potential_file) > 0) THEN
+            IF (potential_file == debug_file) CPABORT("OEP potential and debug filenames must be different")
+            CALL oep_write_potential(qs_env, TRIM(potential_file), coefficients, reference, &
+                                     threshold, homo_condition, SIZE(w, 2))
+         END IF
          IF (LEN_TRIM(debug_file) > 0) THEN
             OPEN (NEWUNIT=unit_dump, FILE=TRIM(debug_file), ACCESS="STREAM", FORM="UNFORMATTED", STATUS="REPLACE")
             WRITE (unit_dump) nao, SIZE(coefficients), nmo, nocc, SIZE(w, 2)
@@ -213,6 +222,104 @@ CONTAINS
       END IF
       CALL timestop(handle)
    END SUBROUTINE oep_exchange_matrix
+
+! **************************************************************************************************
+!> \brief Export the Coulomb source as unnormalized Cartesian primitive Gaussians.
+!>        Folding the spherical contractions into the coefficients makes the file independent
+!>        of basis libraries, normalization conventions, and angular-function ordering.
+!> \param qs_env ...
+!> \param filename ...
+!> \param coefficients total exchange coefficients
+!> \param reference reference exchange coefficients
+!> \param threshold ...
+!> \param homo_condition ...
+!> \param nret ...
+! **************************************************************************************************
+   SUBROUTINE oep_write_potential(qs_env, filename, coefficients, reference, threshold, homo_condition, nret)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      CHARACTER(LEN=*), INTENT(IN)                       :: filename
+      REAL(KIND=dp), INTENT(IN)                          :: coefficients(:), reference(:), threshold
+      LOGICAL, INTENT(IN)                                :: homo_condition
+      INTEGER, INTENT(IN)                                :: nret
+
+      CHARACTER(LEN=2)                                   :: element
+      INTEGER                                            :: first, ia, ico, ip, iset, j, ka, nc, &
+                                                            ncart, ns, offset, unit_nr, z
+      INTEGER, ALLOCATABLE                               :: off_aux(:)
+      LOGICAL                                            :: first_term
+      REAL(KIND=dp), ALLOCATABLE                         :: cart_reference(:), cart_total(:)
+      TYPE(gto_basis_set_p_type), ALLOCATABLE            :: aux(:)
+      TYPE(gto_basis_set_type), POINTER                  :: basis
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particles
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: kinds_set
+      TYPE(qs_ks_env_type), POINTER                      :: ks_env
+
+      CALL get_qs_env(qs_env, qs_kind_set=kinds_set, particle_set=particles, ks_env=ks_env)
+      ALLOCATE (aux(SIZE(kinds_set)), off_aux(SIZE(particles)))
+      DO ka = 1, SIZE(kinds_set)
+         CALL get_qs_kind(kinds_set(ka), basis_set=aux(ka)%gto_basis_set, basis_type="OEP")
+      END DO
+      CALL get_particle_set(particles, kinds_set, first_sgf=off_aux, basis=aux)
+      CALL open_file(filename, unit_nr, file_status="REPLACE", file_action="WRITE")
+      WRITE (unit_nr, '(A)') '{', &
+         '  "format": "CP2K_OEP_POTENTIAL",', &
+         '  "version": 1,', &
+         '  "length_unit": "bohr",', &
+         '  "potential_unit": "hartree",', &
+         '  "representation": "unnormalized_cartesian_gaussians",', &
+         '  "term_columns": ["lx", "ly", "lz", "exponent", "total", "reference"],'
+      IF (homo_condition) THEN
+         WRITE (unit_nr, '(A)') '  "homo_condition": true,'
+      ELSE
+         WRITE (unit_nr, '(A)') '  "homo_condition": false,'
+      END IF
+      WRITE (unit_nr, '(A,ES26.17E3,A)') '  "threshold": ', threshold, ','
+      WRITE (unit_nr, '(A,I0,A)') '  "naux": ', SIZE(coefficients), ','
+      WRITE (unit_nr, '(A,I0,A)') '  "nretained": ', nret, ','
+      WRITE (unit_nr, '(A,ES26.17E3,A)') '  "total_charge": ', DOT_PRODUCT(ks_env%oep%charge, coefficients), ','
+      WRITE (unit_nr, '(A,ES26.17E3,A)') '  "reference_charge": ', DOT_PRODUCT(ks_env%oep%charge, reference), ','
+      WRITE (unit_nr, '(A)') '  "atoms": ['
+      DO ia = 1, SIZE(particles)
+         CALL get_atomic_kind(particles(ia)%atomic_kind, kind_number=ka, element_symbol=element, z=z)
+         basis => aux(ka)%gto_basis_set
+         WRITE (unit_nr, '(A)') '    {'
+         WRITE (unit_nr, '(A)') '      "element": "'//TRIM(element)//'",'
+         WRITE (unit_nr, '(A,I0,A)') '      "atomic_number": ', z, ','
+         WRITE (unit_nr, '(A,2(ES26.17E3,A),ES26.17E3,A)') &
+            '      "position": [', particles(ia)%r(1), ',', particles(ia)%r(2), ',', particles(ia)%r(3), '],'
+         WRITE (unit_nr, '(A)') '      "terms": ['
+         first_term = .TRUE.
+         DO iset = 1, basis%nset
+            nc = ncoset(basis%lmax(iset))
+            ncart = nc*basis%npgf(iset)
+            first = basis%first_sgf(1, iset)
+            ns = basis%nsgf_set(iset)
+            offset = off_aux(ia) + first - 1
+            cart_total = MATMUL(basis%sphi(:ncart, first:first + ns - 1), coefficients(offset:offset + ns - 1))
+            cart_reference = MATMUL(basis%sphi(:ncart, first:first + ns - 1), reference(offset:offset + ns - 1))
+            DO ip = 1, basis%npgf(iset)
+               DO ico = 1, nc
+                  j = (ip - 1)*nc + ico
+                  IF (cart_total(j) == 0.0_dp .AND. cart_reference(j) == 0.0_dp) CYCLE
+                  IF (.NOT. first_term) WRITE (unit_nr, '(A)') ','
+                  WRITE (unit_nr, '(A,3(I0,A),2(ES26.17E3,A),ES26.17E3,A)', ADVANCE="NO") &
+                     '        [', indco(1, ico), ',', indco(2, ico), ',', indco(3, ico), ',', &
+                     basis%zet(ip, iset), ',', cart_total(j), ',', cart_reference(j), ']'
+                  first_term = .FALSE.
+               END DO
+            END DO
+         END DO
+         WRITE (unit_nr, '(A)') ''
+         WRITE (unit_nr, '(A)') '      ]'
+         IF (ia < SIZE(particles)) THEN
+            WRITE (unit_nr, '(A)') '    },'
+         ELSE
+            WRITE (unit_nr, '(A)') '    }'
+         END IF
+      END DO
+      WRITE (unit_nr, '(A)') '  ]', '}'
+      CALL close_file(unit_nr)
+   END SUBROUTINE oep_write_potential
 
 ! **************************************************************************************************
 !> \brief Build analytic, isolated two/three-center integrals and auxiliary charges.
@@ -417,18 +524,19 @@ CONTAINS
 !> \param homo_condition ...
 !> \param v ...
 !> \param coefficients ...
+!> \param vref ...
 !> \param w ...
 !> \param residual ...
 !> \param charge_error ...
 ! **************************************************************************************************
-   SUBROUTINE oep_solve(oep, c, eps, nocc, k, threshold, homo_condition, v, coefficients, w, residual, charge_error)
+   SUBROUTINE oep_solve(oep, c, eps, nocc, k, threshold, homo_condition, v, coefficients, vref, w, residual, charge_error)
       TYPE(qs_oep_type), INTENT(IN)                      :: oep
       REAL(KIND=dp), INTENT(IN)                          :: c(:, :), eps(:)
       INTEGER, INTENT(IN)                                :: nocc
       REAL(KIND=dp), INTENT(IN)                          :: k(:, :), threshold
       LOGICAL, INTENT(IN)                                :: homo_condition
       REAL(KIND=dp), INTENT(OUT)                         :: v(:, :)
-      REAL(KIND=dp), ALLOCATABLE, INTENT(OUT)            :: coefficients(:), w(:, :)
+      REAL(KIND=dp), ALLOCATABLE, INTENT(OUT)            :: coefficients(:), vref(:), w(:, :)
       REAL(KIND=dp), INTENT(OUT)                         :: residual, charge_error
 
       INTEGER                                            :: a, i, j, naux, nconstraint, ndeg, nfree, &
@@ -436,7 +544,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: constraints(2, 2), denom, normalization, &
                                                             TARGET(2)
       REAL(KIND=dp), ALLOCATABLE :: bov(:, :), d(:, :), delta(:), eval(:), gram(:, :), kmo(:, :), &
-         mo(:, :), projector(:, :), q(:), rhs(:), solution(:), trans(:, :), u(:), vc2(:), vref(:), &
+         mo(:, :), projector(:, :), q(:), rhs(:), solution(:), trans(:, :), u(:), vc2(:), &
          weights(:), x(:, :), z(:), z2(:)
 
       naux = SIZE(oep%charge)

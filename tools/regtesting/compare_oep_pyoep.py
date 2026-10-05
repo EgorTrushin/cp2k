@@ -21,6 +21,9 @@ parser.add_argument("--homo", action="store_true")
 parser.add_argument("--pyoep", required=True, type=Path)
 parser.add_argument("--dump", type=Path)
 parser.add_argument("--threshold", type=float, default=0.05)
+parser.add_argument(
+    "--potential", type=Path, help="Also validate a self-contained OEP JSON export"
+)
 args = parser.parse_args()
 sys.path.insert(0, str(args.pyoep.resolve()))
 from methods.exxoep import EXXOEP
@@ -109,10 +112,10 @@ def pyoep_matrix():
     vra = np.einsum("Pij,P->ij", oep.ints_3c_ao, vr)
     rhs = oep.get_rhs(vra, kp, ints, mf.mo_coeff, eps, nocc, wp)
     coeff = vr + wp @ scipy.linalg.solve(x, rhs)
-    return np.einsum("Pij,P->ij", oep.ints_3c_ao, coeff), wp
+    return np.einsum("Pij,P->ij", oep.ints_3c_ao, coeff), wp, vr
 
 
-vp, wp = pyoep_matrix()
+vp, wp, _ = pyoep_matrix()
 results["pyoep_retained"] = int(wp.shape[1])
 results["local_matrix_vs_pyoep"] = err(v, vp[np.ix_(p, p)])
 fmo = mf.mo_coeff.T @ (mf.get_hcore() + oep.vj_ao + vp) @ mf.mo_coeff
@@ -124,8 +127,38 @@ results["charge_error_vs_analytic"] = err(charge, analytic_charge[q])
 oep.y = analytic_charge
 oep.yII = oep.WII.T @ oep.y
 oep.charge_norm = oep.yII @ oep.yII
-vp_analytic, _ = pyoep_matrix()
+vp_analytic, _, reference_coefficients = pyoep_matrix()
 results["local_matrix_vs_pyoep_analytic_charges"] = err(v, vp_analytic[np.ix_(p, p)])
+if args.potential:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "oep"))
+    from potential import OEPPotential
+    from utils.coulomb_potential_on_grid import coulomb_potential_on_grid
+
+    potential = OEPPotential(args.potential)
+    centers = mol.atom_coords()
+    rng = np.random.default_rng(1729)
+    grid = np.vstack(
+        (
+            centers,
+            rng.uniform(centers.min(axis=0) - 6, centers.max(axis=0) + 6, (100, 3)),
+            500 * np.eye(3),
+            -500 * np.eye(3),
+        )
+    )
+    cp_coeff_pyscf = np.empty_like(coefficients)
+    cp_coeff_pyscf[q] = coefficients
+    coulomb_grid = coulomb_potential_on_grid(oep.auxmol, grid)
+    values = potential.evaluate(grid)
+    results["export_total_potential_error"] = err(
+        values[:, 0], coulomb_grid @ cp_coeff_pyscf
+    )
+    results["export_reference_potential_error"] = err(
+        values[:, 1], coulomb_grid @ reference_coefficients
+    )
+    results["export_charge_error"] = err(potential.charges, [-1, -1])
+    assert results["export_total_potential_error"] < 5e-9
+    assert results["export_reference_potential_error"] < 5e-9
+    assert results["export_charge_error"] < 1e-9
 print(json.dumps(results, indent=2))
 assert results["metric_error"] < 1e-8
 assert results["three_center_error"] < 1e-8

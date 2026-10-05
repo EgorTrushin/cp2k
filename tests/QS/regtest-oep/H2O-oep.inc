@@ -57,6 +57,7 @@
         &OEP
           THR_FAI_OEP 0.05
           HOMO_CONDITION ${HOMO_CONDITION}
+          POTENTIAL_FILE_NAME ${OEP_FILE}
         &END OEP
       &END HF
     &END XC
