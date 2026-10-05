@@ -27,8 +27,8 @@ small molecules. Forces, stress, periodic OEP, smearing, and unrestricted spin a
 outside its current scope. GAPW permits all-electron comparisons with molecular
 reference implementations. Converge the GAPW grids and the orbital and OEP bases
 independently. Standard XC-potential cube output does not yet include the OEP
-contribution; its auxiliary coefficients are available through the diagnostic
-dump described below. Response properties have not been validated.
+contribution; use the self-contained potential export described below to plot it.
+Response properties have not been validated.
 
 ## Input fragment
 
@@ -60,6 +60,7 @@ dump described below. Response properties have not been validated.
     &OEP
       THR_FAI_OEP 0.05
       HOMO_CONDITION FALSE
+      POTENTIAL_FILE_NAME vx.oep.json
     &END
   &END
 &END
@@ -117,6 +118,96 @@ auxiliary charges, MO coefficients, MO energies, signed nonlocal exchange matrix
 total potential coefficients, local exchange matrix, and retained transformation
 `W(naux,nret)`. This is a diagnostic format, not a wavefunction restart format.
 
+## Exporting and plotting the exchange potential
+
+Set `DFT / XC / HF / OEP / POTENTIAL_FILE_NAME vx.oep.json` to export the local
+exchange potential. The default is an empty filename, which disables export.
+The exact filename is used, relative to the calculation's working directory;
+existing contents are replaced at each OEP update. Thus the file contains the
+last potential constructed, including if SCF subsequently fails to converge.
+Check the SCF convergence message before treating it as a converged result.
+Choose a different filename for each calculation and for `DEBUG_FILE_NAME`.
+
+The versioned JSON file is self-contained: it holds the atomic positions and
+explicit Gaussian expansions for the total and reference exchange potentials.
+The reference is the Fermi–Amaldi reference for the default constraint, or its
+HOMO-constrained variant when `HOMO_CONDITION TRUE`. The remainder is their
+difference. No orbitals, response matrices, diagnostic dump, external basis files,
+or CP2K installation are needed to evaluate the exported potential.
+
+From the CP2K source directory, use `tools/oep/potential.py` with a Python
+environment containing NumPy and SciPy. Matplotlib is needed only for `--plot`.
+PySCF and PyOEP are not dependencies of this postprocessor.
+
+```shell
+# Sample a line, writing total/reference/remainder values and a plot.
+python tools/oep/potential.py /path/to/vx.oep.json line \
+  --start 0 0 -8 --end 0 0 8 --points 1601 \
+  --output vx-line.csv --plot vx-line.pdf
+
+# Write a three-dimensional total-exchange potential cube.
+python tools/oep/potential.py /path/to/vx.oep.json cube \
+  --spacing 0.2 --margin 5 --output vx.cube
+
+# Evaluate any set of points, including a molecular plane.
+python tools/oep/potential.py /path/to/vx.oep.json points coordinates.txt \
+  --output vx-points.csv
+```
+
+All coordinates, margins, and spacings are in **bohr**, and all potential values
+are in **hartree**. `coordinates.txt` has three whitespace-separated columns
+`x y z`. Cube export accepts `--component total`, `reference`, or `remainder`.
+The cube grid covers the molecular bounding box plus the requested margin;
+its spacing is at most the requested value. Evaluation is analytic in the
+Gaussian representation, including at nuclei, and does not use CP2K's real-space
+grid. The grid selected here only controls sampling and can be changed without
+rerunning SCF.
+
+The Python API `OEPPotential(filename).evaluate(points)` accepts an `(npoints,3)`
+array and returns three columns: total, reference, and remainder. Line CSV files
+prepend `x_bohr,y_bohr,z_bohr` to these three columns. The reader checks the file
+version, units, and integrated auxiliary charges. Independent evaluator and
+cube-format tests can be run with:
+
+```shell
+python -m unittest discover -s tools/oep -p 'test_*.py' -v
+```
+
+### Portable format, version 1
+
+The file identifies itself with `"format": "CP2K_OEP_POTENTIAL"` and
+`"version": 1`. Each atomic center has an `element`, `atomic_number`, `position`
+in bohr, and `terms`. Each term is an array
+`[lx, ly, lz, exponent, total, reference]`, with column names also stored in
+`term_columns`. It denotes the unnormalized charge function
+
+$$
+g(\mathbf r')=(x'-X)^{l_x}(y'-Y)^{l_y}(z'-Z)^{l_z}
+\exp[-\alpha|\mathbf r'-\mathbf R|^2].
+$$
+
+The potential is the sum of **Coulomb integrals** of these functions, weighted by
+the selected coefficient:
+
+$$
+v_x(\mathbf r)=\sum_t c_t\int\frac{g_t(\mathbf r')}{|\mathbf r-\mathbf r'|}\,d\mathbf r'.
+$$
+
+Evaluating `g` itself gives the auxiliary charge distribution, not the potential.
+CP2K folds its primitive normalization, contractions, spherical transformations,
+and final OEP coefficients into the exported Cartesian weights. This preserves
+the potential for general contracted and mixed-angular-momentum auxiliary bases
+without requiring another program to reproduce CP2K's basis conventions. Both
+coefficient columns use the same explicit primitive basis; exactly zero terms
+in both columns are omitted. The original auxiliary dimension, retained
+dimension, threshold, HOMO setting, and integrated charges are also recorded.
+The total and reference charges are -1; the remainder has zero net charge.
+
+The existing `.wfn` restart does not save this export. If a calculation was run
+without `POTENTIAL_FILE_NAME`, restart it with the option enabled to reconstruct
+and save the OEP potential. The JSON is for postprocessing, not for restarting
+SCF.
+
 ## Independent comparison with PyOEP
 
 Two scripts in `tools/regtesting` generate matched molecular calculations and
@@ -134,15 +225,15 @@ python tools/regtesting/prepare_oep_pyoep.py \
 This exports the same Gaussian exponents and contractions and coordinates in
 bohr to CP2K, sorting primitive rows by decreasing exponent as required by the
 GAPW projector construction. It writes `hf.inp`, `oep.inp`, and `oep_homo.inp`,
-and converges
+enables both the diagnostic dump and JSON potential export, and converges
 independent PyOEP references. Run `hf.inp` first in each molecular directory;
 both OEP inputs explicitly read the resulting `hf-RESTART.wfn`. Then compare:
 
 ```shell
 python tools/regtesting/compare_oep_pyoep.py /path/to/oep-tests/h2o \
-  --pyoep /path/to/PyOEP
+  --pyoep /path/to/PyOEP --potential /path/to/oep-tests/h2o/oep.json
 python tools/regtesting/compare_oep_pyoep.py /path/to/oep-tests/h2o \
-  --pyoep /path/to/PyOEP --homo
+  --pyoep /path/to/PyOEP --homo --potential /path/to/oep-tests/h2o/oep_homo.json
 ```
 
 The comparison checks two- and three-center Coulomb integrals, the charge
@@ -155,6 +246,9 @@ The local matrix is compared both with unmodified PyOEP charges and with
 independent analytic charges from PySCF's zero-frequency Fourier integrals.
 The second comparison isolates the ported linear algebra from PyOEP's charge
 quadrature error.
+With `--potential`, it additionally checks the exported total and reference
+potentials at nuclei, arbitrary off-axis points, and distant points against
+PyOEP's independent PySCF-integral grid evaluation.
 
 ## Initial validation
 
@@ -164,6 +258,14 @@ two OpenMP threads; three existing `QS/regtest-hfx` cases retain their original
 reference tolerances. Spin-polarized input and incomplete virtual spaces are
 rejected with OEP diagnostics. The MPI executable also builds, but MPI execution
 was unavailable in the validation environment.
+
+Potential exports were independently checked for H2, H2O with both constraints,
+CO, and a contracted H2 auxiliary basis sharing primitives across s, p, and d
+functions. Total and reference potentials agree with PyOEP/PySCF grid evaluation
+within 4e-12 Ha at the tested points. The molecular JSON files are approximately
+6-18 kB. Five postprocessor tests cover analytic monopoles, independent quadrature
+for Cartesian multipoles through degree six, component charges, cube coordinates
+and values, and rejection of incompatible or damaged files.
 
 For the default charge-only constraint, independent comparisons gave:
 
