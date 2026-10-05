@@ -160,8 +160,59 @@ class FileTests(unittest.TestCase):
             values, potential.evaluate(coordinates)[:, 2], atol=1e-11, rtol=1e-10
         )
 
+    def test_rpa_components_and_zero_charge_correlation(self):
+        exchange = OEPPotential(self.path)
+        self.data["version"] = 2
+        self.data["term_columns"] += ["exchange", "correlation"]
+        self.data["exchange_charge"] = -1.0
+        self.data["correlation_charge"] = 0.0
+        for i, atom in enumerate(self.data["atoms"]):
+            for term in atom["terms"]:
+                vc = 0.0
+                if term[:3] == [0, 0, 0]:
+                    vc = (1 - 2 * i) * 0.1 * (term[3] / np.pi) ** 1.5
+                vx = term[4]
+                term[4] += vc
+                term += [vx, vc]
+        self.path.write_text(json.dumps(self.data))
+        potential = OEPPotential(self.path)
+        points = np.random.default_rng(1).normal(size=(17, 3))
+        values = potential.evaluate(points, batch_size=3)
+        correlation = np.zeros(len(points))
+        for i, atom in enumerate(self.data["atoms"]):
+            exponent = atom["terms"][0][3]
+            correlation += (
+                (1 - 2 * i)
+                * 0.1
+                * (exponent / np.pi) ** 1.5
+                * gaussian_potentials(
+                    np.array(atom["position"]) - points, exponent, [(0, 0, 0)]
+                )[:, 0]
+            )
+        np.testing.assert_allclose(values[:, 4], correlation, atol=1e-14)
+        np.testing.assert_allclose(
+            values[:, 3], exchange.evaluate(points)[:, 0], atol=1e-14
+        )
+        np.testing.assert_allclose(
+            values[:, 0], values[:, 3] + values[:, 4], atol=1e-14
+        )
+        np.testing.assert_allclose(potential.charges, [-1, -1, -1, 0], atol=1e-14)
+        cube = Path(self.directory.name) / "correlation.cube"
+        shape = potential.write_cube(
+            cube, spacing=0.5, margin=0.4, component="correlation"
+        )
+        lines = cube.read_text().splitlines()
+        origin = np.array(lines[2].split()[1:], dtype=float)
+        vectors = np.array([line.split()[1:] for line in lines[3:6]], dtype=float)
+        coordinates = origin + np.indices(shape).reshape(3, -1).T @ vectors
+        cube_values = np.fromstring(" ".join(lines[8:]), sep=" ")
+        np.testing.assert_allclose(
+            cube_values, potential.evaluate(coordinates)[:, 4], atol=1e-11
+        )
+
     def test_reject_incompatible_or_damaged_export(self):
         changes = [
+            ("version", 99),
             ("version", 2),
             ("length_unit", "angstrom"),
             ("total_charge", -2),

@@ -3,3 +3,6 @@
 "H2O-hf.inp"                           = [{matcher="E_total", tol=1.0e-10, ref=-76.05489012956717}]
 "H2O-oep.inp"                          = [{matcher="E_total", tol=1.0e-10, ref=-76.05289071761253}]
 "H2O-oep-homo.inp"                     = [{matcher="E_total", tol=1.0e-10, ref=-76.05281483054348}]
+"H2-rpa.inp"                           = [{matcher="E_total", tol=1.0e-10, ref=-1.208014620567318}]
+"H2O-rpa.inp"                          = [{matcher="E_total", tol=1.0e-10, ref=-76.467772803654995}]
+"H2O-rpa-homo.inp"                     = [{matcher="E_total", tol=1.0e-10, ref=-76.467736337043618}]

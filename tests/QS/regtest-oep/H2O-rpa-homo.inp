@@ -1,5 +1,5 @@
-@SET RPA FALSE
+@SET RPA TRUE
 @SET OEP_RESTART hf-RESTART.wfn
 @SET HOMO_CONDITION TRUE
-@SET OEP_FILE h2o-oep-homo.json
+@SET OEP_FILE h2o-rpa-homo.json
 @INCLUDE H2O-oep.inc

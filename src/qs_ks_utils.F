@@ -903,6 +903,7 @@ CONTAINS
       CALL check_sum_energy(energy%total, energy%exc, "Exchange-correlation energy")
       CALL check_sum_energy(energy%total, energy%exc1, "Exc1 energy")
       CALL check_sum_energy(energy%total, energy%ex, "Ex energy")
+      CALL check_sum_energy(energy%total, energy%oep_rpa, "RPA-OEP correlation energy")
       CALL check_sum_energy(energy%total, energy%dispersion, "Dispersion energy")
       CALL check_sum_energy(energy%total, energy%gcp, "gCP energy")
       CALL check_sum_energy(energy%total, energy%qmmm_el, "QM/MM Electrostatic energy")
@@ -1125,6 +1126,9 @@ CONTAINS
       output_unit = cp_print_key_unit_nr(logger, input, "DFT%SCF%PRINT%DETAILED_ENERGY", &
                                          extension=".scfLog")
       IF (output_unit > 0) THEN
+         IF (energy%oep_rpa /= 0.0_dp) THEN
+            WRITE (output_unit, '(T3,A,T60,F20.10)') "RPA-OEP correlation energy:", energy%oep_rpa
+         END IF
          IF (dft_control%do_admm) THEN
             WRITE (UNIT=output_unit, FMT="((T3,A,T60,F20.10))") &
                "Wfn fit exchange-correlation energy:            ", energy%exc_aux_fit

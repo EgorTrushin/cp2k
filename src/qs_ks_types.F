@@ -143,7 +143,7 @@ MODULE qs_ks_types
 ! **************************************************************************************************
    TYPE qs_ks_env_type
       PRIVATE
-      TYPE(qs_oep_type), ALLOCATABLE, PUBLIC :: oep
+      TYPE(qs_oep_type), ALLOCATABLE, PUBLIC :: oep, oep_ri
       LOGICAL                                               :: s_mstruct_changed = .TRUE., &
                                                                rho_changed = .TRUE., &
                                                                potential_changed = .TRUE., &
@@ -763,6 +763,7 @@ CONTAINS
       TYPE(qs_ks_env_type), INTENT(INOUT)                :: ks_env
 
       IF (ALLOCATED(ks_env%oep)) DEALLOCATE (ks_env%oep)
+      IF (ALLOCATED(ks_env%oep_ri)) DEALLOCATE (ks_env%oep_ri)
       IF (ASSOCIATED(ks_env%v_hartree_rspace)) THEN
          CALL ks_env%v_hartree_rspace%release()
          DEALLOCATE (ks_env%v_hartree_rspace)
@@ -880,6 +881,7 @@ CONTAINS
       TYPE(qs_ks_env_type), INTENT(INOUT)                :: ks_env
 
       IF (ALLOCATED(ks_env%oep)) DEALLOCATE (ks_env%oep)
+      IF (ALLOCATED(ks_env%oep_ri)) DEALLOCATE (ks_env%oep_ri)
       IF (ASSOCIATED(ks_env%v_hartree_rspace)) THEN
          CALL ks_env%v_hartree_rspace%release()
          DEALLOCATE (ks_env%v_hartree_rspace)
