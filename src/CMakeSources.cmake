@@ -729,6 +729,7 @@ list(
   qs_oce_types.F
   qs_operators_ao.F
   qs_ot_eigensolver.F
+  qs_oep.F
   qs_ot.F
   qs_ot_kp.F
   qs_ot_minimizer.F

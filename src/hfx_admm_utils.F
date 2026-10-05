@@ -129,6 +129,7 @@ MODULE hfx_admm_utils
    USE qs_oce_methods,                  ONLY: build_oce_matrices
    USE qs_oce_types,                    ONLY: allocate_oce_set,&
                                               create_oce_set
+   USE qs_oep,                          ONLY: oep_exchange_matrix
    USE qs_overlap,                      ONLY: build_overlap_matrix
    USE qs_rho_atom_methods,             ONLY: init_rho_atom
    USE qs_rho_methods,                  ONLY: qs_rho_rebuild
@@ -1406,6 +1407,8 @@ CONTAINS
 
       ! *** Set the total HFX energy
       energy%ex = ehfx + ehfxrt
+
+      CALL oep_exchange_matrix(qs_env, matrix_ks, hfx_sections)
 
       ! *** Add Core-Hamiltonian-Matrix ***
       DO ispin = 1, nspins

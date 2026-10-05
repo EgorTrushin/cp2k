@@ -153,7 +153,44 @@ CONTAINS
       CALL section_add_subsection(section, subsection)
       CALL section_release(subsection)
 
+      CALL create_hf_oep_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
+
    END SUBROUTINE create_hfx_section
+
+! **************************************************************************************************
+!> \brief Molecular exact-exchange optimized effective potential.
+!> \param section ...
+! **************************************************************************************************
+   SUBROUTINE create_hf_oep_section(section)
+      TYPE(section_type), POINTER :: section
+      TYPE(keyword_type), POINTER :: keyword
+
+      CALL section_create(section, __LOCATION__, name="OEP", &
+                          description="Exact-exchange OEP for closed-shell isolated molecules. "// &
+                          "Uses BASIS_SET OEP on every KIND and all virtual orbitals. "// &
+                          "Auxiliary-basis preprocessing follows Trushin and Goerling, "// &
+                          "J. Chem. Phys. 155, 054109 (2021). Energies only.", &
+                          n_keywords=3, n_subsections=0, repeats=.FALSE.)
+      NULLIFY (keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="THR_FAI_OEP", &
+                          description="Cutoff for eigenvalues of the unweighted occupied-virtual "// &
+                          "coupling Gram matrix after Coulomb normalization and constraints.", &
+                          default_r_val=5.0E-2_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="HOMO_CONDITION", &
+                          description="Impose equality of local and nonlocal exchange HOMO expectations.", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="DEBUG_FILE_NAME", &
+                          description="Optional binary matrix dump for comparison with a reference OEP solver.", &
+                          default_c_val="")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+   END SUBROUTINE create_hf_oep_section
 
 ! **************************************************************************************************
 !> \brief !****f* input_cp2k_dft/create_hf_load_balance_section [1.0] *
