@@ -166,13 +166,14 @@ CONTAINS
    SUBROUTINE create_hf_oep_section(section)
       TYPE(section_type), POINTER :: section
       TYPE(keyword_type), POINTER :: keyword
+      TYPE(section_type), POINTER :: subsection
 
       CALL section_create(section, __LOCATION__, name="OEP", &
                           description="Exact-exchange OEP for closed-shell isolated molecules. "// &
                           "Uses BASIS_SET OEP on every KIND and all virtual orbitals. "// &
                           "Auxiliary-basis preprocessing follows Trushin and Goerling, "// &
                           "J. Chem. Phys. 155, 054109 (2021). Energies only.", &
-                          n_keywords=4, n_subsections=0, repeats=.FALSE.)
+                          n_keywords=4, n_subsections=1, repeats=.FALSE.)
       NULLIFY (keyword)
       CALL keyword_create(keyword, __LOCATION__, name="THR_FAI_OEP", &
                           description="Cutoff for eigenvalues of the unweighted occupied-virtual "// &
@@ -191,14 +192,58 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, name="POTENTIAL_FILE_NAME", &
-                          description="Optional self-contained JSON export of the local exchange potential. "// &
+                          description="Optional self-contained JSON export of the local OEP potential. "// &
                           "Contains atomic coordinates and explicit Gaussian expansions of the total and "// &
-                          "reference potentials in atomic units. Replaced at each OEP update; "// &
+                          "reference potentials in atomic units; with RPA, also separate exchange and correlation. "// &
+                          "Replaced at each OEP update; "// &
                           "check SCF convergence before using it. An empty filename disables export.", &
                           default_c_val="")
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
+      NULLIFY (subsection)
+      CALL create_oep_rpa_section(subsection)
+      CALL section_add_subsection(section, subsection)
+      CALL section_release(subsection)
    END SUBROUTINE create_hf_oep_section
+
+! **************************************************************************************************
+!> \brief Self-consistent molecular RPA correlation in the local OEP potential.
+!> \param section ...
+! **************************************************************************************************
+   SUBROUTINE create_oep_rpa_section(section)
+      TYPE(section_type), POINTER :: section
+      TYPE(keyword_type), POINTER :: keyword
+
+      CALL section_create(section, __LOCATION__, name="RPA", &
+                          description="Add self-consistent direct RPA correlation to EXX-OEP, "// &
+                          "following PyOEP. Requires BASIS_SET RI_AUX on every KIND and "// &
+                          "XC_FUNCTIONAL NONE. This is distinct from post-SCF WF_CORRELATION/RI_RPA.", &
+                          n_keywords=5, n_subsections=0, repeats=.FALSE.)
+      NULLIFY (keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="_SECTION_PARAMETERS_", &
+                          description="Enable self-consistent RPA correlation energy and local potential.", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="THR_FAI_RI", &
+                          description="Unweighted occupied-virtual coupling cutoff for the Coulomb-normalized, "// &
+                          "charge-constrained RI response basis.", default_r_val=1.0E-8_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="QUADRATURE_POINTS", &
+                          description="Number of scaled Gauss-Legendre imaginary-frequency points.", default_i_val=20)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="FREQUENCY_SCALE", &
+                          description="Scale x0 in omega=x0*(1+t)/(1-t), in hartree.", default_r_val=2.5_dp)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="DEBUG_FILE_NAME", &
+                          description="Optional binary dump of RPA integrals, response spaces and correlation potential.", &
+                          default_c_val="")
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+   END SUBROUTINE create_oep_rpa_section
 
 ! **************************************************************************************************
 !> \brief !****f* input_cp2k_dft/create_hf_load_balance_section [1.0] *

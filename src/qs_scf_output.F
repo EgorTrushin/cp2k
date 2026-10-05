@@ -843,6 +843,10 @@ CONTAINS
                WRITE (UNIT=output_unit, FMT="(T3,A,T56,F25.14)") &
                   "Hartree-Fock Exchange energy:                  ", energy%ex
             END IF
+            IF (energy%oep_rpa /= 0.0_dp) THEN
+               WRITE (UNIT=output_unit, FMT="(T3,A,T56,F25.14)") &
+                  "RPA-OEP correlation energy:                    ", energy%oep_rpa
+            END IF
             IF (energy%dispersion /= 0.0_dp) THEN
                WRITE (UNIT=output_unit, FMT="(T3,A,T56,F25.14)") &
                   "Dispersion energy:                             ", energy%dispersion
