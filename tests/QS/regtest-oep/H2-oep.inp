@@ -55,6 +55,7 @@
         &END MEMORY
         &OEP
           THR_FAI_OEP 0.05
+          POTENTIAL_FILE_NAME h2-oep.json
         &END OEP
       &END HF
     &END XC
