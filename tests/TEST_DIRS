@@ -57,6 +57,7 @@ QS/regtest-ot
 QS/regtest-gpw-1                                            libint libvori !ifx
 QS/regtest-gpw-8
 QS/regtest-hfx                                              libint !ifx
+QS/regtest-oep                                              libint !ifx
 QS/regtest-sym-4
 QS/regtest-sym-3
 QS/regtest-sym-5

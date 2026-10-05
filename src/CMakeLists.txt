@@ -676,6 +676,7 @@ list(
   qs_ks_qmmm_methods.F
   qs_ks_qmmm_types.F
   qs_ks_types.F
+  qs_oep.F
   qs_ks_utils.F
   qs_ks_reference.F
   qs_kubo_transport.F

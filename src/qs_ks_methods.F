@@ -133,6 +133,7 @@ MODULE qs_ks_methods
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_type
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
+   USE qs_oep,                          ONLY: oep_validate
    USE qs_rho0_ggrid,                   ONLY: integrate_vhg0_rspace
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
@@ -1075,6 +1076,7 @@ CONTAINS
 
       IF (do_hfx) THEN
          ace_section => section_vals_get_subs_vals(hfx_sections, "ACE")
+         CALL oep_validate(qs_env, hfx_sections, calculate_forces)
          IF (ASSOCIATED(ace_section)) THEN
             CALL section_vals_val_get(ace_section, "ACTIVE", l_val=ace_active)
             CALL section_vals_val_get(ace_section, "REBUILD_FREQUENCY", i_val=ace_rebuild_frequency)
