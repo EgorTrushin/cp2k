@@ -111,6 +111,7 @@ list(
   cp_dbcsr_cp2k_link.F
   cp_dbcsr_diag.F
   cp_dbcsr_operations.F
+  cp_dbcsr_redistribution.F
   cp_dbcsr_output.F
   cp_ddapc.F
   cp_ddapc_forces.F
@@ -230,24 +231,26 @@ list(
   group_dist_types.F
   grrm_utils.F
   gapw_1c_basis_set.F
-  gw_ri_rs_compute_Z_lP.F
-  gw_ri_rs_compute_Z_lP_utils.F
   gw_auto_ri_generate_RI_basis.F
   gw_auto_ri_types.F
+  gw_compute_V_and_W.F
   gw_utils_dbcsr.F
   gw_utils_fm.F
-  gw_utils_communication.F
   gw.F
   gw_tensor_large_cell_gamma.F
   gw_tensor_large_cell_gamma_static_cohsex.F
   gw_tensor_small_cell_full_kp.F
   gw_ri_rs_non_periodic.F
   gw_ri_rs_large_cell_gamma.F
-  gw_ri_rs_grid_from_file.F
-  gw_ri_rs_grid_initialization.F
-  gw_ri_rs_grid_optimization.F
-  gw_ri_rs_grid_setup_main.F
-  gw_ri_rs_utils.F
+  ri_rs_grid_from_file.F
+  ri_rs_grid_initialization.F
+  ri_rs_grid_optimization.F
+  ri_rs_grid_setup.F
+  ri_rs_setup.F
+  ri_rs_types.F
+  ri_rs_utils.F
+  ri_rs_fitting.F
+  ri_rs_matrices.F
   post_scf_bandstructure_types.F
   post_scf_bandstructure_utils.F
   gw_utils.F
@@ -433,6 +436,7 @@ list(
   mp2_ri_gpw.F
   mp2_ri_grad.F
   mp2_ri_grad_util.F
+  matrix_communication.F
   mp2_ri_libint.F
   mp2_setup.F
   mp2_types.F
@@ -670,6 +674,11 @@ list(
   qs_ks_utils.F
   qs_ks_reference.F
   qs_kubo_transport.F
+  kubo_bloch.F
+  kubo_hall.F
+  kubo_projected.F
+  qs_kubo_bloch.F
+  qs_property_symmetry.F
   qs_spectral_localizer.F
   qs_localizer_torus.F
   spectral_localizer.F
@@ -802,6 +811,7 @@ list(
   qs_wannier90.F
   qs_wf_history_methods.F
   qs_wf_history_types.F
+  r12_fundamentals.F
   rel_control_types.F
   replica_methods.F
   replica_types.F
@@ -812,7 +822,6 @@ list(
   rixs_types.F
   rmsd.F
   rpa_exchange.F
-  rpa_communication.F
   rpa_grad.F
   rpa_gw.F
   rpa_gw_ic.F
@@ -1060,6 +1069,7 @@ list(
   CP2K_SRCS_F
   dbt/dbt_allocate_wrap.F
   dbt/dbt_api.F
+  dbt/dbt_matrix_redistribution.F
   dbt/dbt_array_list_methods.F
   dbt/dbt_block.F
   dbt/dbt_index.F
@@ -1118,6 +1128,7 @@ list(
   fm/cp_fm_elpa.F
   fm/cp_fm_pool_types.F
   fm/cp_fm_types.F
+  fm/cp_fm_redistribution.F
   fm/cp_fm_struct.F
   fm/cp_linked_list_fm.F)
 
@@ -1626,6 +1637,7 @@ set(CP2K_PROGS_F
     kpoint_smearing_unittest.F
     motion/cell_opt_utils_unittest.F
     topology_wilson_unittest.F
+    kubo_unittest.F
     spectral_localizer_unittest.F
     quadratic_pseudospectrum_unittest.F
     pw/pw_unittest.F
@@ -1644,6 +1656,7 @@ set(CP2K_PROGS_F
     qs_ot_complex_ref_unittest.F
     wannier90_projections_unittest.F
     subsys/cell_types_unittest.F
+    hfx_pair_list_methods_unittest.F
     metadyn_tools/graph.F
     motion/dumpdcd.F
     motion/xyz2dcd.F
@@ -1891,7 +1904,7 @@ target_link_libraries(
     $<$<BOOL:${CP2K_USE_ACE}>:pace::pace>
     $<$<BOOL:${CP2K_USE_TBLITE}>:cp2k::tblite>
     $<$<BOOL:${CP2K_USE_TBLITE}>:s-dftd3::s-dftd3>
-    $<$<BOOL:${CP2K_USE_SIRIUS}>:cp2k::sirius>
+    $<$<BOOL:${CP2K_USE_SIRIUS}>:sirius::sirius>
     $<$<BOOL:${CP2K_USE_VORI}>:cp2k::VORI::vori>
     $<$<BOOL:${CP2K_USE_SPGLIB}>:Spglib::symspg>
     $<$<BOOL:${CP2K_USE_LIBSMEAGOL}>:cp2k::libsmeagol::smeagol>
@@ -2039,10 +2052,8 @@ add_library(cp2k::cp2k ALIAS cp2k)
 if(CP2K_USE_LIBXS)
   message(STATUS "Adding libxs_jit.F from dependency libxs for compilation")
   get_target_property(_libxs_incdirs libxs::libxs INTERFACE_INCLUDE_DIRECTORIES)
-  find_path(CP2K_LIBXS_JIT_DIR "libxs_jit.F" HINTS ${_libxs_incdirs})
-  if(CP2K_LIBXS_JIT_DIR)
-    target_sources(cp2k PRIVATE "${CP2K_LIBXS_JIT_DIR}/libxs_jit.F")
-  endif()
+  find_path(CP2K_LIBXS_JIT_DIR "libxs_jit.F" HINTS ${_libxs_incdirs} REQUIRED)
+  target_sources(cp2k PRIVATE "${CP2K_LIBXS_JIT_DIR}/libxs_jit.F")
   unset(_libxs_incdirs)
 endif()
 
@@ -2066,6 +2077,7 @@ list(
   "kpoint_lattice_fft_unittest"
   "kpoint_smearing_unittest"
   "topology_wilson_unittest"
+  "kubo_unittest"
   "spectral_localizer_unittest"
   "quadratic_pseudospectrum_unittest"
   "pw_unittest"
@@ -2084,6 +2096,7 @@ list(
   "qs_ot_complex_ref_unittest"
   "wannier90_projections_unittest"
   "cell_types_unittest"
+  "hfx_pair_list_methods_unittest"
   "graph"
   "dumpdcd"
   "xyz2dcd"
@@ -2115,6 +2128,7 @@ add_executable(gapw_unittest gapw_unittest.F)
 add_executable(kpoint_lattice_fft_unittest kpoint_lattice_fft_unittest.F)
 add_executable(kpoint_smearing_unittest kpoint_smearing_unittest.F)
 add_executable(topology_wilson_unittest topology_wilson_unittest.F)
+add_executable(kubo_unittest kubo_unittest.F)
 add_executable(spectral_localizer_unittest spectral_localizer_unittest.F)
 add_executable(quadratic_pseudospectrum_unittest
                quadratic_pseudospectrum_unittest.F)
@@ -2137,6 +2151,7 @@ add_executable(qs_active_space_utils_unittest qs_active_space_utils_unittest.F)
 add_executable(qs_ot_complex_ref_unittest qs_ot_complex_ref_unittest.F)
 add_executable(wannier90_projections_unittest wannier90_projections_unittest.F)
 add_executable(cell_types_unittest subsys/cell_types_unittest.F)
+add_executable(hfx_pair_list_methods_unittest hfx_pair_list_methods_unittest.F)
 add_executable(cell_opt_utils_unittest motion/cell_opt_utils_unittest.F)
 add_executable(graph metadyn_tools/graph.F)
 add_executable(dumpdcd motion/dumpdcd.F)
