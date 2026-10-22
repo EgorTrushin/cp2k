@@ -1091,7 +1091,6 @@ CONTAINS
          "BX, BY and CY. Z fixes the complete c vector, because only c has a z component: Z equals C. "// &
          "Accepted tokens: NONE, A, B, C, X, Y, Z, XY, XZ, YZ, AX, BX, BY, CX, CY, CZ. "// &
          "Several tokens may be given on one line, the union of the fixed components is used. "// &
-         "Give the value unquoted. "// &
          "NONE must stand alone, redundant tokens give a warning, and angle constraints "// &
          "(ALPHA, BETA, GAMMA) are not supported yet. On a non-orthorhombic cell a constraint "// &
          "that pins a shear component (BX, CX, CY), or a fixed diagonal component together "// &
@@ -1100,7 +1099,7 @@ CONTAINS
          "external pressure at the constrained minimum. Check the per-step pressure "// &
          "convergence report.", &
          usage="CONSTRAINT {NONE} | ({A|B|C|X|Y|Z|XY|XZ|YZ|AX|BX|BY|CX|CY|CZ} ...)", &
-         type_of_var=lchar_t, default_lc_val="NONE")
+         type_of_var=char_t, n_var=-1, default_c_vals=["NONE"])
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
@@ -2956,13 +2955,7 @@ CONTAINS
                                        "(Gaussian cube file format)", &
                                        each_iter_names=s2a("PINT"), each_iter_values=[100], &
                                        print_level=medium_print_level, common_iter_levels=1, &
-                                       add_last=add_last_numeric)
-      CALL keyword_create(keyword, __LOCATION__, name="BACKUP_COPIES", &
-                          description="Specifies the maximum number of backup copies.", &
-                          usage="BACKUP_COPIES {int}", &
-                          default_i_val=1)
-      CALL section_add_keyword(print_key, keyword)
-      CALL keyword_release(keyword)
+                                       add_last=add_last_numeric, do_backup=.TRUE.)
       CALL section_add_subsection(subsection, print_key)
       CALL section_release(print_key)
       !

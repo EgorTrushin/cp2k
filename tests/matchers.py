@@ -61,6 +61,10 @@ registry["Cube_O_effective_charge"] = GenericMatcher(
     r"^\s*8\s+([-+0-9.EeDd]+)\s+", col=1, regex=True, first=True
 )
 
+registry["Shake_colvar_multiplier"] = GenericMatcher(
+    r"Shake  Lagrangian Multipliers:", col=4
+)
+
 registry["M002"] = GenericMatcher(r"MD| Potential energy", col=5)
 registry["M003"] = GenericMatcher(r"Total energy [eV]:", col=4)
 registry["M004"] = GenericMatcher(r"Ideal and single determinant", col=8)
@@ -191,6 +195,8 @@ registry["M016"] = GenericMatcher(r"CheckSum Chi =", col=4)
 registry["M017"] = GenericMatcher(r"Total=", col=8)
 registry["Dipole_trajectory_norm"] = GenericMatcher("MOMENTS|", col=6)
 registry["Dipole_trajectory_cell_xx"] = GenericMatcher("MOMENTS|", col=7)
+registry["Dipole_z_first"] = GenericMatcher(r"X=", col=6, first=True)
+registry["Dipole_z"] = GenericMatcher(r"X=", col=6)
 registry["Molecular_moment_x"] = GenericMatcher(r"Order: 1", col=3)
 registry["M018"] = GenericMatcher(r"MS| TRACKED FREQUENCY", col=6)
 registry["M019"] = GenericMatcher(r"CheckSum splines =", col=4)
@@ -617,4 +623,13 @@ registry["LOCALIZER_UNRESOLVED"] = TextPresenceMatcher(
 
 registry["Band_first_eigenvalue"] = GenericMatcher(
     r"^\s*1\s+([-+]?\d+\.\d{8})\s+\d+\.\d{8}\s*$", col=2, regex=True
+)
+registry["Kubo_hall_max"] = GenericMatcher(r"KUBO_TRANSPORT| hall_max", col=3)
+
+registry["Kubo_symmetry_current_error"] = GenericMatcher(
+    r"KUBO_TRANSPORT| Symmetry errors S/H/current:", col=7
+)
+
+registry["Kubo_symmetry_points"] = GenericMatcher(
+    r"KUBO_TRANSPORT| Property symmetry representatives:", col=5
 )

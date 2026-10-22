@@ -2405,6 +2405,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       ! Release SCF work storage
+      IF (ALLOCATED(scf_env%fm_copy_plan)) DEALLOCATE (scf_env%fm_copy_plan)
       CALL cp_fm_release(scf_env%scf_work1)
 
       IF (ASSOCIATED(scf_env%scf_work1_red)) THEN
